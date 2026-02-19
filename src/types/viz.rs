@@ -65,6 +65,14 @@ pub struct RenderOptions {
     pub stroke_width: f32,
     pub gradient: crate::types::gradient::Gradient,
     pub smoothing: usize,
+    pub glow: bool,
+    pub show_endpoints: bool,
+    /// Catmull-Rom curve tension for route smoothing.
+    /// 0.0 = straight lines, 0.5 = very rounded. Good range: 0.2–0.4.
+    pub curve_tension: f32,
+    /// Keep every Nth point before rendering. Higher = fewer points = smoother but less detailed.
+    /// 1 = no simplification, 5 = keep every 5th point. Good range: 3–10.
+    pub simplify: usize,
 }
 
 impl RenderOptions {
@@ -79,10 +87,14 @@ impl RenderOptions {
         Some(Self {
             width,
             height,
-            padding: 40,
-            stroke_width: 3.0,
+            padding: 80,
+            stroke_width: 4.0,
             gradient: crate::types::gradient::Gradient::default(),
             smoothing: 5,
+            glow: true,
+            show_endpoints: true,
+            curve_tension: 0.3,
+            simplify: 5,
         })
     }
 }

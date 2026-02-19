@@ -24,26 +24,81 @@ fn render_route(
     let gradient_id = "routeGradient";
     let gradient_def = create_linear_gradient(gradient_id, &options.gradient);
 
-    let mut path_data = String::new();
-    for (i, point) in points.iter().enumerate() {
-        let x = padding + point.x * view_width;
-        let y = padding + (1.0 - point.y) * view_height;
+    let stride = options.simplify.max(1);
+    let coords: Vec<(f64, f64)> = points
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| i % stride == 0 || *i == points.len() - 1)
+        .map(|(_, p)| (padding + p.x * view_width, padding + (1.0 - p.y) * view_height))
+        .collect();
 
-        if i == 0 {
-            path_data.push_str(&format!("M {:.2} {:.2}", x, y));
-        } else {
-            path_data.push_str(&format!(" L {:.2} {:.2}", x, y));
-        }
-    }
+    let path_data = if options.curve_tension > 0.0 {
+        build_smooth_path(&coords, options.curve_tension)
+    } else {
+        coords.iter().enumerate().fold(String::new(), |mut s, (i, (x, y))| {
+            if i == 0 { s.push_str(&format!("M {:.2} {:.2}", x, y)); }
+            else { s.push_str(&format!(" L {:.2} {:.2}", x, y)); }
+            s
+        })
+    };
+
+    let glow_filter = if options.glow {
+        r#"<filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="6" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>"#.to_string()
+    } else {
+        String::new()
+    };
+
+    let glow_path = if options.glow {
+        format!(
+            r#"<path d="{}" fill="none" stroke="url(#{})" stroke-width="{:.1}" stroke-linecap="round" stroke-linejoin="round" filter="url(#glow)" opacity="0.6"/>"#,
+            path_data, gradient_id, options.stroke_width * 3.0
+        )
+    } else {
+        String::new()
+    };
+
+    let endpoint_dots = if options.show_endpoints && points.len() >= 2 {
+        let first = &points[0];
+        let last = &points[points.len() - 1];
+        let sx = padding + first.x * view_width;
+        let sy = padding + (1.0 - first.y) * view_height;
+        let ex = padding + last.x * view_width;
+        let ey = padding + (1.0 - last.y) * view_height;
+        let r = options.stroke_width as f64 * 2.5;
+        let start_color = &options.gradient.colors[0];
+        let end_color = &options.gradient.colors[options.gradient.colors.len() - 1];
+        format!(
+            r#"<circle cx="{:.2}" cy="{:.2}" r="{:.2}" fill="{}" opacity="0.95"/>
+  <circle cx="{:.2}" cy="{:.2}" r="{:.2}" fill="{}" opacity="0.95"/>"#,
+            sx, sy, r, start_color,
+            ex, ey, r, end_color
+        )
+    } else {
+        String::new()
+    };
 
     Ok(format!(
         r#"<svg xmlns="http://www.w3.org/2000/svg" width="{}" height="{}" viewBox="0 0 {} {}">
   <defs>
     {}
+    {}
   </defs>
+  {}
   <path d="{}" fill="none" stroke="url(#{})" stroke-width="{}" stroke-linecap="round" stroke-linejoin="round"/>
+  {}
 </svg>"#,
-        width, height, width, height, gradient_def, path_data, gradient_id, options.stroke_width
+        width, height, width, height,
+        gradient_def, glow_filter,
+        glow_path,
+        path_data, gradient_id, options.stroke_width,
+        endpoint_dots
     ))
 }
 
@@ -97,24 +152,43 @@ fn render_elevation(
     let last_x = padding + view_width;
     area_path.push_str(&format!(" L {:.2} {:.2} Z", last_x, height - padding));
 
+    let glow_filter = if options.glow {
+        r#"<filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="6" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>"#.to_string()
+    } else {
+        String::new()
+    };
+
+    let glow_path = if options.glow {
+        format!(
+            r#"<path d="{}" fill="none" stroke="url(#{})" stroke-width="{:.1}" stroke-linecap="round" stroke-linejoin="round" filter="url(#glow)" opacity="0.6"/>"#,
+            line_path, gradient_id, options.stroke_width * 3.0
+        )
+    } else {
+        String::new()
+    };
+
     Ok(format!(
         r#"<svg xmlns="http://www.w3.org/2000/svg" width="{}" height="{}" viewBox="0 0 {} {}">
   <defs>
     {}
+    {}
   </defs>
   <path d="{}" fill="url(#{})" fill-opacity="0.3"/>
+  {}
   <path d="{}" fill="none" stroke="url(#{})" stroke-width="{}" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>"#,
-        width,
-        height,
-        width,
-        height,
-        gradient_def,
-        area_path,
-        gradient_id,
-        line_path,
-        gradient_id,
-        options.stroke_width
+        width, height, width, height,
+        gradient_def, glow_filter,
+        area_path, gradient_id,
+        glow_path,
+        line_path, gradient_id, options.stroke_width
     ))
 }
 
@@ -161,15 +235,75 @@ fn render_time_series(
         }
     }
 
+    let glow_filter = if options.glow {
+        r#"<filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="6" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>"#.to_string()
+    } else {
+        String::new()
+    };
+
+    let glow_path = if options.glow {
+        format!(
+            r#"<path d="{}" fill="none" stroke="url(#{})" stroke-width="{:.1}" stroke-linecap="round" stroke-linejoin="round" filter="url(#glow)" opacity="0.6"/>"#,
+            path_data, gradient_id, options.stroke_width * 3.0
+        )
+    } else {
+        String::new()
+    };
+
     Ok(format!(
         r#"<svg xmlns="http://www.w3.org/2000/svg" width="{}" height="{}" viewBox="0 0 {} {}">
   <defs>
     {}
+    {}
   </defs>
+  {}
   <path d="{}" fill="none" stroke="url(#{})" stroke-width="{}" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>"#,
-        width, height, width, height, gradient_def, path_data, gradient_id, options.stroke_width
+        width, height, width, height,
+        gradient_def, glow_filter,
+        glow_path,
+        path_data, gradient_id, options.stroke_width
     ))
+}
+
+/// Catmull-Rom spline converted to cubic bezier curves.
+/// tension: 0.0 = straight, ~0.3 = smooth, 0.5 = very rounded.
+fn build_smooth_path(points: &[(f64, f64)], tension: f32) -> String {
+    if points.is_empty() {
+        return String::new();
+    }
+    if points.len() == 1 {
+        return format!("M {:.2} {:.2}", points[0].0, points[0].1);
+    }
+
+    let t = tension as f64;
+    let mut path = format!("M {:.2} {:.2}", points[0].0, points[0].1);
+
+    for i in 0..points.len() - 1 {
+        let p0 = if i > 0 { points[i - 1] } else { points[i] };
+        let p1 = points[i];
+        let p2 = points[i + 1];
+        let p3 = if i + 2 < points.len() { points[i + 2] } else { points[i + 1] };
+
+        let cp1x = p1.0 + (p2.0 - p0.0) * t;
+        let cp1y = p1.1 + (p2.1 - p0.1) * t;
+        let cp2x = p2.0 - (p3.0 - p1.0) * t;
+        let cp2y = p2.1 - (p3.1 - p1.1) * t;
+
+        path.push_str(&format!(
+            " C {:.2} {:.2} {:.2} {:.2} {:.2} {:.2}",
+            cp1x, cp1y, cp2x, cp2y, p2.0, p2.1
+        ));
+    }
+
+    path
 }
 
 fn create_linear_gradient(id: &str, gradient: &crate::types::gradient::Gradient) -> String {

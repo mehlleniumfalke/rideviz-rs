@@ -21,8 +21,8 @@ RUN mkdir src && \
 # Copy source code
 COPY . .
 
-# Build the actual application
-RUN cargo build --release
+# Build the actual application (touch src to force cargo to relink after dummy build)
+RUN touch src/main.rs && cargo build --release
 
 # Runtime stage
 FROM debian:bookworm-slim

@@ -7,7 +7,6 @@ mod types;
 
 use axum::Router;
 use tower_http::cors::{Any, CorsLayer};
-use tower_http::limit::RequestBodyLimitLayer;
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -46,7 +45,7 @@ async fn main() {
                 .allow_methods(Any)
                 .allow_headers(Any),
         )
-        .layer(RequestBodyLimitLayer::new(config.max_file_size))
+        .layer(axum::extract::DefaultBodyLimit::max(config.max_file_size))
         .layer(TraceLayer::new_for_http())
         .with_state(state);
 

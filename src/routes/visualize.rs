@@ -35,6 +35,10 @@ struct VisualizeRequest {
     smoothing: usize,
     #[serde(default = "default_background")]
     background: String,
+    #[serde(default = "default_true")]
+    glow: bool,
+    #[serde(default = "default_true")]
+    show_endpoints: bool,
 }
 
 fn default_format() -> String {
@@ -54,12 +58,29 @@ fn default_padding() -> u32 {
 }
 
 fn default_smoothing() -> usize {
-    5
+    30
+}
+
+/// Maps smoothing level (0–100) to internal route rendering parameters.
+/// Returns (simplify stride, curve tension).
+///   0   → raw GPS, straight lines
+///   30  → default, balanced
+///   100 → heavily stylized, very rounded
+fn smoothing_to_route_params(level: usize) -> (usize, f32) {
+    let t = level.min(100) as f32 / 100.0;
+    let simplify = (1.0 + t * 29.0).round() as usize; // 1 → 30
+    let tension = t * 0.45;                             // 0.0 → 0.45
+    (simplify, tension)
 }
 
 fn default_background() -> String {
     "transparent".to_string()
 }
+
+fn default_true() -> bool {
+    true
+}
+
 
 async fn visualize(
     State(state): State<AppState>,
@@ -87,6 +108,10 @@ async fn visualize(
             stroke_width: req.stroke_width,
             gradient: Gradient::default(),
             smoothing: req.smoothing,
+            glow: req.glow,
+            show_endpoints: req.show_endpoints,
+            curve_tension: 0.3,
+            simplify: 5,
         }
     } else {
         RenderOptions::from_format(&req.format).ok_or_else(|| {
@@ -101,6 +126,11 @@ async fn visualize(
     options.stroke_width = req.stroke_width;
     options.padding = req.padding;
     options.smoothing = req.smoothing;
+    options.glow = req.glow;
+    options.show_endpoints = req.show_endpoints;
+    let (simplify, curve_tension) = smoothing_to_route_params(req.smoothing);
+    options.simplify = simplify;
+    options.curve_tension = curve_tension;
 
     tracing::info!(
         "Generating {} visualization for file {} ({}x{}, gradient: {})",

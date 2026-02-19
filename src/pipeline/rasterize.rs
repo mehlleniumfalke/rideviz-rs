@@ -3,7 +3,8 @@ use crate::types::viz::OutputConfig;
 
 pub fn rasterize(svg: &str, config: &OutputConfig) -> Result<Vec<u8>, RasterError> {
     let options = usvg::Options::default();
-    let tree = usvg::Tree::from_str(svg, &options)
+    let fontdb = usvg::fontdb::Database::new();
+    let tree = usvg::Tree::from_str(svg, &options, &fontdb)
         .map_err(|e| RasterError::RenderFailed(format!("Failed to parse SVG: {}", e)))?;
 
     let mut pixmap = tiny_skia::Pixmap::new(config.width, config.height)
