@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: rideviz-service
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: ./
+    plan: free
+    envVars:
+      - key: PORT
+        value: 3000
+      - key: RUST_LOG
+        value: info
+      - key: MAX_FILE_SIZE_MB
+        value: 25
+      - key: CACHE_TTL_SECONDS
+        value: 3600
+    healthCheckPath: /health
