@@ -17,7 +17,7 @@ struct UploadResponse {
     file_id: String,
     file_type: String,
     metrics: Metrics,
-    available_visualizations: Vec<String>,
+    available_data: AvailableData,
 }
 
 async fn upload(
@@ -52,8 +52,6 @@ async fn upload(
     let processed = process::process(&parsed)?;
 
     let file_id = Uuid::new_v4().to_string();
-    let available_viz = get_available_visualizations(&processed.available_data);
-
     state.insert(file_id.clone(), processed.clone());
 
     tracing::info!(
@@ -68,7 +66,7 @@ async fn upload(
         file_id,
         file_type: format_name(format).to_string(),
         metrics: processed.metrics,
-        available_visualizations: available_viz,
+        available_data: processed.available_data,
     }))
 }
 
@@ -79,19 +77,3 @@ fn format_name(format: FileFormat) -> &'static str {
     }
 }
 
-fn get_available_visualizations(data: &AvailableData) -> Vec<String> {
-    let mut viz = Vec::new();
-    if data.has_coordinates {
-        viz.push("route".to_string());
-    }
-    if data.has_elevation {
-        viz.push("elevation".to_string());
-    }
-    if data.has_heart_rate {
-        viz.push("heartrate".to_string());
-    }
-    if data.has_power {
-        viz.push("power".to_string());
-    }
-    viz
-}

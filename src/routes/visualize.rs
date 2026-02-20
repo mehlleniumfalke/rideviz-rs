@@ -8,41 +8,35 @@ use axum::{
 use serde::{Deserialize, Serialize};
 
 use crate::error::AppError;
-use crate::pipeline::{prepare, rasterize, render};
+use crate::pipeline::{animate, prepare, rasterize, render};
 use crate::state::AppState;
-use crate::types::{gradient::Gradient, viz::{OutputConfig, RenderOptions, VizType}};
+use crate::types::{
+    gradient::Gradient,
+    viz::{ColorByMetric, OutputConfig, RenderOptions},
+};
 
 pub fn router() -> Router<AppState> {
     Router::new().route("/api/visualize", post(visualize))
 }
 
 #[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 struct VisualizeRequest {
     file_id: String,
-    #[serde(rename = "type")]
-    viz_type: String,
-    #[serde(default = "default_format")]
-    format: String,
     #[serde(default = "default_gradient")]
     gradient: String,
-    width: Option<u32>,
-    height: Option<u32>,
+    color_by: Option<String>,
     #[serde(default = "default_stroke_width")]
     stroke_width: f32,
     #[serde(default = "default_padding")]
     padding: u32,
     #[serde(default = "default_smoothing")]
     smoothing: usize,
-    #[serde(default = "default_background")]
-    background: String,
     #[serde(default = "default_true")]
     glow: bool,
-    #[serde(default = "default_true")]
-    show_endpoints: bool,
-}
-
-fn default_format() -> String {
-    "story".to_string()
+    background: Option<String>,
+    animation_frames: Option<u32>,
+    animation_duration_ms: Option<u32>,
 }
 
 fn default_gradient() -> String {
@@ -61,26 +55,18 @@ fn default_smoothing() -> usize {
     30
 }
 
-/// Maps smoothing level (0–100) to internal route rendering parameters.
-/// Returns (simplify stride, curve tension).
-///   0   → raw GPS, straight lines
-///   30  → default, balanced
-///   100 → heavily stylized, very rounded
-fn smoothing_to_route_params(level: usize) -> (usize, f32) {
-    let t = level.min(100) as f32 / 100.0;
-    let simplify = (1.0 + t * 29.0).round() as usize; // 1 → 30
-    let tension = t * 0.45;                             // 0.0 → 0.45
-    (simplify, tension)
-}
-
-fn default_background() -> String {
-    "transparent".to_string()
-}
-
 fn default_true() -> bool {
     true
 }
 
+/// Maps smoothing level (0-100) to internal route rendering parameters.
+/// Returns (simplify stride, curve tension).
+fn smoothing_to_route_params(level: usize) -> (usize, f32) {
+    let t = level.min(100) as f32 / 100.0;
+    let simplify = (1.0 + t * 29.0).round() as usize; // 1 -> 30
+    let tension = t * 0.45; // 0.0 -> 0.45
+    (simplify, tension)
+}
 
 async fn visualize(
     State(state): State<AppState>,
@@ -90,100 +76,98 @@ async fn visualize(
         .get(&req.file_id)
         .ok_or_else(|| AppError::NotFound(req.file_id.clone()))?;
 
-    let viz_type = VizType::from_str(&req.viz_type)
-        .ok_or_else(|| AppError::BadRequest(format!("Invalid visualization type: {}", req.viz_type)))?;
-
-    let mut options = if req.format == "custom" {
-        let width = req.width.ok_or_else(|| {
-            AppError::BadRequest("width is required for custom format".to_string())
-        })?;
-        let height = req.height.ok_or_else(|| {
-            AppError::BadRequest("height is required for custom format".to_string())
-        })?;
-
-        RenderOptions {
-            width,
-            height,
-            padding: req.padding,
-            stroke_width: req.stroke_width,
-            gradient: Gradient::default(),
-            smoothing: req.smoothing,
-            glow: req.glow,
-            show_endpoints: req.show_endpoints,
-            curve_tension: 0.3,
-            simplify: 5,
-        }
-    } else {
-        RenderOptions::from_format(&req.format).ok_or_else(|| {
-            AppError::BadRequest(format!(
-                "Invalid format: {}. Use 'story', 'post', 'wide', or 'custom'",
-                req.format
-            ))
-        })?
-    };
-
+    let mut options = RenderOptions::route_3d_defaults();
     options.gradient = Gradient::get(&req.gradient).unwrap_or_else(Gradient::default);
     options.stroke_width = req.stroke_width;
     options.padding = req.padding;
     options.smoothing = req.smoothing;
     options.glow = req.glow;
-    options.show_endpoints = req.show_endpoints;
+    options.color_by = match req.color_by.as_deref() {
+        Some(metric) => Some(ColorByMetric::from_str(metric).ok_or_else(|| {
+            AppError::BadRequest(format!(
+                "Invalid color_by: {}. Use 'elevation', 'speed', 'heartrate', or 'power'",
+                metric
+            ))
+        })?),
+        None => None,
+    };
+    options.animation_frames = req
+        .animation_frames
+        .unwrap_or(options.animation_frames)
+        .clamp(8, 180);
+    options.animation_duration_ms = req
+        .animation_duration_ms
+        .unwrap_or(options.animation_duration_ms)
+        .clamp(500, 8000);
+
+    let megapixels = (options.width as f64 * options.height as f64) / 1_000_000.0;
+    let frame_ceiling = if megapixels > 6.0 {
+        56
+    } else if megapixels > 3.0 {
+        84
+    } else {
+        140
+    };
+    options.animation_frames = options.animation_frames.min(frame_ceiling);
+
     let (simplify, curve_tension) = smoothing_to_route_params(req.smoothing);
     options.simplify = simplify;
     options.curve_tension = curve_tension;
 
-    tracing::info!(
-        "Generating {} visualization for file {} ({}x{}, gradient: {})",
-        viz_type.as_str(),
-        req.file_id,
-        options.width,
-        options.height,
-        options.gradient.name
-    );
-
-    let viz_data = prepare::prepare(&processed, viz_type)?;
-    let svg = render::render_svg(&viz_data, &options)?;
-
-    let background = if req.background == "transparent" {
-        None
-    } else if req.background.starts_with('#') {
-        parse_hex_color(&req.background)
-    } else {
-        None
+    let viz_data = prepare::prepare(&processed, &options)?;
+    
+    let background = match req.background.as_deref() {
+        Some("white") => Some((255, 255, 255, 255)),
+        Some("black") => Some((0, 0, 0, 255)),
+        Some("transparent") | None => None,
+        Some(other) => {
+            return Err(AppError::BadRequest(format!(
+                "Invalid background: {}. Use 'transparent', 'white', or 'black'",
+                other
+            )));
+        }
     };
-
+    
     let output_config = OutputConfig {
         width: options.width,
         height: options.height,
         background,
     };
 
-    let png_bytes = rasterize::rasterize(&svg, &output_config)?;
-
-    tracing::info!("Generated PNG: {} bytes", png_bytes.len());
+    let image_bytes = if req.animation_frames.is_none() && req.animation_duration_ms.is_none() {
+        // Static image - render single frame at progress=1.0 (full route)
+        tracing::info!(
+            "Generating static route-3d image for file {} ({}x{}, gradient: {})",
+            req.file_id,
+            options.width,
+            options.height,
+            options.gradient.name
+        );
+        let svg = render::render_svg_frame(&viz_data, &options, 1.0)?;
+        rasterize::rasterize(&svg, &output_config)?
+    } else {
+        // Animated APNG
+        tracing::info!(
+            "Generating route-3d animation for file {} ({}x{}, gradient: {})",
+            req.file_id,
+            options.width,
+            options.height,
+            options.gradient.name
+        );
+        animate::render_apng(&viz_data, &options, &output_config)?
+    };
+    
+    let (content_type, description) = if req.animation_frames.is_none() && req.animation_duration_ms.is_none() {
+        ("image/png", "PNG")
+    } else {
+        ("image/apng", "APNG")
+    };
+    
+    tracing::info!("Generated {}: {} bytes", description, image_bytes.len());
 
     Ok((
         StatusCode::OK,
-        [(header::CONTENT_TYPE, "image/png")],
-        png_bytes,
+        [(header::CONTENT_TYPE, content_type)],
+        image_bytes,
     ))
-}
-
-fn parse_hex_color(hex: &str) -> Option<(u8, u8, u8, u8)> {
-    let hex = hex.trim_start_matches('#');
-    
-    if hex.len() == 6 {
-        let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
-        let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
-        let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
-        Some((r, g, b, 255))
-    } else if hex.len() == 8 {
-        let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
-        let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
-        let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
-        let a = u8::from_str_radix(&hex[6..8], 16).ok()?;
-        Some((r, g, b, a))
-    } else {
-        None
-    }
 }

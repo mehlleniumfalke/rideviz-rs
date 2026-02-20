@@ -33,7 +33,6 @@ impl FileFormat {
 #[derive(Debug, Clone)]
 pub struct ParsedActivity {
     pub points: Vec<TrackPoint>,
-    pub file_format: FileFormat,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

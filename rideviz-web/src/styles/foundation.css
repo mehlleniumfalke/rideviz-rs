@@ -1,0 +1,109 @@
+/* Minimal Design System */
+
+/* Geist Sans Variable */
+@font-face {
+  font-family: 'Geist Sans';
+  src: url('/node_modules/geist/dist/fonts/geist-sans/Geist-Variable.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* Geist Pixel (for headings) */
+@font-face {
+  font-family: 'Geist Pixel';
+  src: url('/node_modules/geist/dist/fonts/geist-pixel/GeistPixel-Square.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  --white: #ffffff;
+  --black: #000000;
+  --gray: #666666;
+  --gray-light: #999999;
+  --border: 1px solid #000;
+  
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-6: 24px;
+  --space-8: 32px;
+  
+  --font-display: 'Geist Pixel', monospace;
+  --font-body: 'Geist Sans', system-ui, -apple-system, sans-serif;
+  
+  --text-xs: 11px;
+  --text-sm: 13px;
+  --text-base: 15px;
+  --text-lg: 18px;
+  --text-xl: 24px;
+  --text-2xl: 32px;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  font-family: var(--font-body);
+  font-size: var(--text-base);
+  color: var(--black);
+  background: var(--white);
+  min-height: 100vh;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-display);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+h1 { font-size: var(--text-2xl); }
+h2 { font-size: var(--text-xl); }
+h3 { font-size: var(--text-lg); }
+
+button {
+  font-family: var(--font-display);
+  cursor: pointer;
+  border: var(--border);
+  background: var(--white);
+  padding: var(--space-2) var(--space-4);
+  font-size: var(--text-sm);
+  letter-spacing: -0.01em;
+}
+
+button:hover {
+  background: var(--black);
+  color: var(--white);
+}
+
+button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+input[type="range"] {
+  width: 100%;
+  cursor: pointer;
+}
+
+input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+}
+
+#root {
+  min-height: 100vh;
+}

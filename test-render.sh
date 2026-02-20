@@ -1,158 +1,80 @@
 #!/bin/bash
 
-# Test script for Render deployment
 # Usage: ./test-render.sh <RENDER_URL> <GPX_FILE>
-# Example: ./test-render.sh https://rideviz-rs.onrender.com ride.gpx
-
 RENDER_URL="${1:-http://localhost:3000}"
 GPX_FILE="${2:-test.gpx}"
 
-echo "🧪 Testing RideViz-RS on Render"
-echo "================================"
+echo "Testing RideViz-RS"
 echo "URL: $RENDER_URL"
 echo ""
 
-# Test 1: Health check
-echo "1️⃣  Health Check..."
-curl -s "$RENDER_URL/health" | jq '.'
-if [ $? -eq 0 ]; then
-  echo "✅ Health check passed"
-else
-  echo "❌ Health check failed - is the service running?"
+echo "1) Health check"
+if ! curl -s "$RENDER_URL/health" | jq '.'; then
+  echo "Health check failed"
   exit 1
 fi
 echo ""
 
-# Test 2: Upload GPX file
 if [ ! -f "$GPX_FILE" ]; then
-  echo "❌ File not found: $GPX_FILE"
-  echo "Usage: $0 <RENDER_URL> <GPX_FILE>"
+  echo "File not found: $GPX_FILE"
   exit 1
 fi
 
-echo "2️⃣  Uploading: $GPX_FILE"
+echo "2) Uploading: $GPX_FILE"
 UPLOAD_RESPONSE=$(curl -s -X POST "$RENDER_URL/api/upload" -F "file=@$GPX_FILE")
 echo "$UPLOAD_RESPONSE" | jq '.'
 
 FILE_ID=$(echo "$UPLOAD_RESPONSE" | jq -r '.file_id')
 if [ "$FILE_ID" == "null" ] || [ -z "$FILE_ID" ]; then
-  echo "❌ Upload failed"
+  echo "Upload failed"
   exit 1
 fi
-echo "✅ Upload successful! File ID: $FILE_ID"
+echo "Upload successful: $FILE_ID"
 echo ""
 
-# Test 3: Generate visualizations
-echo "3️⃣  Generating visualizations..."
-echo ""
-
-# Route (default with glow and endpoints)
-echo "📍 Route (story format, fire gradient, glow enabled)..."
+echo "3) Route 3D APNG (default profile)"
 curl -s -X POST "$RENDER_URL/api/visualize" \
   -H "Content-Type: application/json" \
   -d "{
     \"file_id\": \"$FILE_ID\",
-    \"type\": \"route\",
-    \"format\": \"story\",
-    \"gradient\": \"fire\"
+    \"gradient\": \"rideviz\",
+    \"color_by\": \"elevation\",
+    \"stroke_width\": 3,
+    \"padding\": 40,
+    \"smoothing\": 30,
+    \"glow\": true,
+    \"animation_frames\": 100,
+    \"animation_duration_ms\": 4600
   }" \
-  --output route.png
+  --output route-3d.apng
 
-if [ -f route.png ] && [ -s route.png ]; then
-  SIZE=$(ls -lh route.png | awk '{print $5}')
-  echo "✅ route.png created ($SIZE)"
+if [ -f route-3d.apng ] && [ -s route-3d.apng ]; then
+  SIZE=$(ls -lh route-3d.apng | awk '{print $5}')
+  echo "route-3d.apng created ($SIZE)"
 else
-  echo "❌ route.png failed"
+  echo "route-3d.apng failed"
+  exit 1
 fi
 
-# Route without glow
-echo "📍 Route (post format, ocean gradient, no glow)..."
+echo ""
+echo "4) Route 3D APNG (no glow)"
 curl -s -X POST "$RENDER_URL/api/visualize" \
   -H "Content-Type: application/json" \
   -d "{
     \"file_id\": \"$FILE_ID\",
-    \"type\": \"route\",
-    \"format\": \"post\",
-    \"gradient\": \"ocean\",
+    \"gradient\": \"fire\",
     \"glow\": false,
-    \"show_endpoints\": false
+    \"smoothing\": 50
   }" \
-  --output route-clean.png
+  --output route-3d-no-glow.apng
 
-if [ -f route-clean.png ] && [ -s route-clean.png ]; then
-  SIZE=$(ls -lh route-clean.png | awk '{print $5}')
-  echo "✅ route-clean.png created ($SIZE)"
+if [ -f route-3d-no-glow.apng ] && [ -s route-3d-no-glow.apng ]; then
+  SIZE=$(ls -lh route-3d-no-glow.apng | awk '{print $5}')
+  echo "route-3d-no-glow.apng created ($SIZE)"
 else
-  echo "❌ route-clean.png failed"
-fi
-
-# Elevation
-echo "📈 Elevation (post format, ocean gradient)..."
-curl -s -X POST "$RENDER_URL/api/visualize" \
-  -H "Content-Type: application/json" \
-  -d "{
-    \"file_id\": \"$FILE_ID\",
-    \"type\": \"elevation\",
-    \"format\": \"post\",
-    \"gradient\": \"ocean\"
-  }" \
-  --output elevation.png
-
-if [ -f elevation.png ] && [ -s elevation.png ]; then
-  SIZE=$(ls -lh elevation.png | awk '{print $5}')
-  echo "✅ elevation.png created ($SIZE)"
-else
-  echo "❌ elevation.png failed"
-fi
-
-# Heart Rate (if available)
-echo "❤️  Heart Rate (wide format, sunset gradient)..."
-curl -s -X POST "$RENDER_URL/api/visualize" \
-  -H "Content-Type: application/json" \
-  -d "{
-    \"file_id\": \"$FILE_ID\",
-    \"type\": \"heartrate\",
-    \"format\": \"wide\",
-    \"gradient\": \"sunset\"
-  }" \
-  --output heartrate.png 2>/dev/null
-
-if [ -f heartrate.png ] && [ -s heartrate.png ]; then
-  SIZE=$(ls -lh heartrate.png | awk '{print $5}')
-  echo "✅ heartrate.png created ($SIZE)"
-else
-  echo "⚠️  heartrate.png skipped (no HR data in file)"
-  rm -f heartrate.png 2>/dev/null
-fi
-
-# Power (if available)
-echo "⚡ Power (story format, violet gradient)..."
-curl -s -X POST "$RENDER_URL/api/visualize" \
-  -H "Content-Type: application/json" \
-  -d "{
-    \"file_id\": \"$FILE_ID\",
-    \"type\": \"power\",
-    \"format\": \"story\",
-    \"gradient\": \"violet\"
-  }" \
-  --output power.png 2>/dev/null
-
-if [ -f power.png ] && [ -s power.png ]; then
-  SIZE=$(ls -lh power.png | awk '{print $5}')
-  echo "✅ power.png created ($SIZE)"
-else
-  echo "⚠️  power.png skipped (no power data in file)"
-  rm -f power.png 2>/dev/null
+  echo "route-3d-no-glow.apng failed"
+  exit 1
 fi
 
 echo ""
-echo "================================"
-echo "🎉 Testing complete!"
-echo ""
-echo "Generated files:"
-ls -lh *.png 2>/dev/null || echo "No PNG files created"
-echo ""
-echo "💡 Tip: Try different smoothing values (0-100):"
-echo "   smoothing: 0   = raw GPS points, no smoothing"
-echo "   smoothing: 30  = default, balanced (new default)"
-echo "   smoothing: 100 = heavily stylized, very rounded"
+echo "Done."

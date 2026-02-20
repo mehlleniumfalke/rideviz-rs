@@ -5,8 +5,6 @@ use serde_json::json;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ParseError {
-    #[error("Unsupported file format: {0}")]
-    UnsupportedFormat(String),
     #[error("Invalid GPX: {0}")]
     InvalidGpx(String),
     #[error("Invalid FIT: {0}")]
@@ -37,6 +35,8 @@ pub enum RenderError {
 pub enum RasterError {
     #[error("PNG rendering failed: {0}")]
     RenderFailed(String),
+    #[error("Animation rendering failed: {0}")]
+    AnimationFailed(String),
 }
 
 #[derive(Debug, thiserror::Error)]

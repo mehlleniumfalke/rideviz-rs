@@ -1,9 +1,8 @@
 use crate::error::ParseError;
 use crate::pipeline::parse::Parser;
-use crate::types::activity::{FileFormat, ParsedActivity, TrackPoint};
-use chrono::{DateTime, Utc};
+use crate::types::activity::{ParsedActivity, TrackPoint};
+use chrono::DateTime;
 use fitparser::profile::MesgNum;
-use fitparser::FitDataRecord;
 
 pub struct FitParser;
 
@@ -89,10 +88,7 @@ impl Parser for FitParser {
             return Err(ParseError::EmptyFile);
         }
 
-        Ok(ParsedActivity {
-            points,
-            file_format: FileFormat::Fit,
-        })
+        Ok(ParsedActivity { points })
     }
 }
 

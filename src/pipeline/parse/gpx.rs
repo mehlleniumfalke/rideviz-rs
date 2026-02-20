@@ -1,6 +1,6 @@
 use crate::error::ParseError;
 use crate::pipeline::parse::Parser;
-use crate::types::activity::{FileFormat, ParsedActivity, TrackPoint};
+use crate::types::activity::{ParsedActivity, TrackPoint};
 use chrono::{DateTime, Utc};
 use quick_xml::events::Event;
 use quick_xml::Reader;
@@ -102,9 +102,6 @@ impl Parser for GpxParser {
             return Err(ParseError::EmptyFile);
         }
 
-        Ok(ParsedActivity {
-            points,
-            file_format: FileFormat::Gpx,
-        })
+        Ok(ParsedActivity { points })
     }
 }

@@ -1,128 +1,63 @@
 use crate::error::PrepareError;
-use crate::types::activity::ProcessedActivity;
-use crate::types::viz::{ElevationPoint, RoutePoint, TimeSeriesPoint, VizData, VizType};
+use crate::types::activity::{ProcessedActivity, TrackPoint};
+use crate::types::viz::{ColorByMetric, RenderOptions, RoutePoint, VizData};
 
-pub fn prepare(processed: &ProcessedActivity, viz_type: VizType) -> Result<VizData, PrepareError> {
-    match viz_type {
-        VizType::Route => prepare_route(processed),
-        VizType::Elevation => prepare_elevation(processed),
-        VizType::HeartRate => prepare_heart_rate(processed),
-        VizType::Power => prepare_power(processed),
-    }
-}
-
-fn prepare_route(processed: &ProcessedActivity) -> Result<VizData, PrepareError> {
+pub fn prepare(processed: &ProcessedActivity, options: &RenderOptions) -> Result<VizData, PrepareError> {
     if !processed.available_data.has_coordinates {
         return Err(PrepareError::MissingData("coordinates"));
     }
-
-    let points: Vec<RoutePoint> = processed
-        .points
-        .iter()
-        .map(|p| {
-            let (x, y) = mercator_project(p.lat, p.lon);
-            RoutePoint { x, y }
-        })
-        .collect();
-
-    if points.is_empty() {
-        return Err(PrepareError::MissingData("coordinates"));
-    }
-
-    let normalized = normalize_route_points(&points);
-    Ok(VizData::Route(normalized))
-}
-
-fn prepare_elevation(processed: &ProcessedActivity) -> Result<VizData, PrepareError> {
     if !processed.available_data.has_elevation {
         return Err(PrepareError::MissingData("elevation"));
     }
-
-    let mut distance_km = 0.0;
-    let mut points = Vec::new();
-
-    for i in 0..processed.points.len() {
-        let point = &processed.points[i];
-        if let Some(elevation) = point.elevation {
-            points.push(ElevationPoint {
-                distance_km,
-                elevation_m: elevation,
-            });
-
-            if i + 1 < processed.points.len() {
-                let next = &processed.points[i + 1];
-                distance_km += haversine_distance(point.lat, point.lon, next.lat, next.lon);
+    if let Some(metric) = options.color_by {
+        match metric {
+            ColorByMetric::Elevation if !processed.available_data.has_elevation => {
+                return Err(PrepareError::MissingData("elevation"));
             }
+            ColorByMetric::HeartRate if !processed.available_data.has_heart_rate => {
+                return Err(PrepareError::MissingData("heart rate"));
+            }
+            ColorByMetric::Power if !processed.available_data.has_power => {
+                return Err(PrepareError::MissingData("power"));
+            }
+            ColorByMetric::Speed if !has_speed_samples(&processed.points) => {
+                return Err(PrepareError::MissingData("timestamp"));
+            }
+            _ => {}
         }
     }
 
-    if points.is_empty() {
-        return Err(PrepareError::MissingData("elevation"));
-    }
-
-    Ok(VizData::Elevation(points))
-}
-
-fn prepare_heart_rate(processed: &ProcessedActivity) -> Result<VizData, PrepareError> {
-    if !processed.available_data.has_heart_rate {
-        return Err(PrepareError::MissingData("heart rate"));
-    }
-
-    let start_time = processed
+    let projected: Vec<(f64, f64)> = processed
         .points
         .iter()
-        .find_map(|p| p.time)
-        .ok_or(PrepareError::MissingData("heart rate"))?;
+        .map(|p| mercator_project(p.lat, p.lon))
+        .collect();
 
-    let points: Vec<TimeSeriesPoint> = processed
-        .points
-        .iter()
-        .filter_map(|p| {
-            let time = p.time?;
-            let hr = p.heart_rate?;
-            Some(TimeSeriesPoint {
-                time_offset_sec: (time - start_time).num_seconds() as f64,
-                value: hr as f64,
-            })
+    if projected.is_empty() {
+        return Err(PrepareError::MissingData("coordinates"));
+    }
+
+    let normalized = normalize_route_points(&projected);
+    let values = options
+        .color_by
+        .map(|metric| compute_route_metric_values(&processed.points, metric));
+
+    let points = normalized
+        .into_iter()
+        .enumerate()
+        .map(|(idx, (x, y))| RoutePoint {
+            x,
+            y,
+            value: values
+                .as_ref()
+                .and_then(|metric_values| metric_values.get(idx))
+                .copied()
+                .flatten(),
+            elevation: processed.points.get(idx).and_then(|p| p.elevation),
         })
         .collect();
 
-    if points.is_empty() {
-        return Err(PrepareError::MissingData("heart rate"));
-    }
-
-    Ok(VizData::HeartRate(points))
-}
-
-fn prepare_power(processed: &ProcessedActivity) -> Result<VizData, PrepareError> {
-    if !processed.available_data.has_power {
-        return Err(PrepareError::MissingData("power"));
-    }
-
-    let start_time = processed
-        .points
-        .iter()
-        .find_map(|p| p.time)
-        .ok_or(PrepareError::MissingData("power"))?;
-
-    let points: Vec<TimeSeriesPoint> = processed
-        .points
-        .iter()
-        .filter_map(|p| {
-            let time = p.time?;
-            let power = p.power?;
-            Some(TimeSeriesPoint {
-                time_offset_sec: (time - start_time).num_seconds() as f64,
-                value: power as f64,
-            })
-        })
-        .collect();
-
-    if points.is_empty() {
-        return Err(PrepareError::MissingData("power"));
-    }
-
-    Ok(VizData::Power(points))
+    Ok(VizData { points })
 }
 
 fn mercator_project(lat: f64, lon: f64) -> (f64, f64) {
@@ -131,15 +66,15 @@ fn mercator_project(lat: f64, lon: f64) -> (f64, f64) {
     (x, y)
 }
 
-fn normalize_route_points(points: &[RoutePoint]) -> Vec<RoutePoint> {
+fn normalize_route_points(points: &[(f64, f64)]) -> Vec<(f64, f64)> {
     if points.is_empty() {
         return Vec::new();
     }
 
-    let min_x = points.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
-    let max_x = points.iter().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max);
-    let min_y = points.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
-    let max_y = points.iter().map(|p| p.y).fold(f64::NEG_INFINITY, f64::max);
+    let min_x = points.iter().map(|(x, _)| *x).fold(f64::INFINITY, f64::min);
+    let max_x = points.iter().map(|(x, _)| *x).fold(f64::NEG_INFINITY, f64::max);
+    let min_y = points.iter().map(|(_, y)| *y).fold(f64::INFINITY, f64::min);
+    let max_y = points.iter().map(|(_, y)| *y).fold(f64::NEG_INFINITY, f64::max);
 
     let range_x = max_x - min_x;
     let range_y = max_y - min_y;
@@ -150,11 +85,103 @@ fn normalize_route_points(points: &[RoutePoint]) -> Vec<RoutePoint> {
 
     points
         .iter()
-        .map(|p| RoutePoint {
-            x: (p.x - min_x) / range_x,
-            y: (p.y - min_y) / range_y,
-        })
+        .map(|(x, y)| ((*x - min_x) / range_x, (*y - min_y) / range_y))
         .collect()
+}
+
+fn compute_route_metric_values(points: &[TrackPoint], metric: ColorByMetric) -> Vec<Option<f64>> {
+    if points.is_empty() {
+        return Vec::new();
+    }
+
+    let mut values = vec![None; points.len()];
+
+    match metric {
+        ColorByMetric::Elevation => {
+            for i in 0..points.len().saturating_sub(1) {
+                let current = &points[i];
+                let next = &points[i + 1];
+                if let (Some(curr_elev), Some(next_elev)) = (current.elevation, next.elevation) {
+                    let distance_km =
+                        haversine_distance(current.lat, current.lon, next.lat, next.lon);
+                    if distance_km > f64::EPSILON {
+                        let grade = (next_elev - curr_elev) / (distance_km * 1000.0);
+                        values[i] = Some(grade);
+                    }
+                }
+            }
+        }
+        ColorByMetric::Speed => {
+            for i in 0..points.len().saturating_sub(1) {
+                let current = &points[i];
+                let next = &points[i + 1];
+                if let (Some(current_time), Some(next_time)) = (current.time, next.time) {
+                    let delta_seconds = (next_time - current_time).num_seconds() as f64;
+                    if delta_seconds > f64::EPSILON {
+                        let distance_km =
+                            haversine_distance(current.lat, current.lon, next.lat, next.lon);
+                        let speed_kmh = distance_km / (delta_seconds / 3600.0);
+                        values[i] = Some(speed_kmh);
+                    }
+                }
+            }
+        }
+        ColorByMetric::HeartRate => {
+            for (idx, point) in points.iter().enumerate() {
+                values[idx] = point.heart_rate.map(|hr| hr as f64);
+            }
+        }
+        ColorByMetric::Power => {
+            for (idx, point) in points.iter().enumerate() {
+                values[idx] = point.power.map(|power| power as f64);
+            }
+        }
+    }
+
+    if values.len() >= 2 && values[values.len() - 1].is_none() {
+        let last_idx = values.len() - 1;
+        let prev_idx = last_idx - 1;
+        values[last_idx] = values[prev_idx];
+    }
+
+    normalize_optional_values(&values)
+}
+
+fn normalize_optional_values(values: &[Option<f64>]) -> Vec<Option<f64>> {
+    let mut min_value = f64::INFINITY;
+    let mut max_value = f64::NEG_INFINITY;
+    for value in values.iter().flatten() {
+        min_value = min_value.min(*value);
+        max_value = max_value.max(*value);
+    }
+
+    if !min_value.is_finite() || !max_value.is_finite() {
+        return vec![None; values.len()];
+    }
+
+    let range = max_value - min_value;
+    if range <= f64::EPSILON {
+        return values
+            .iter()
+            .map(|value| value.map(|_| 0.5))
+            .collect();
+    }
+
+    values
+        .iter()
+        .map(|value| value.map(|v| (v - min_value) / range))
+        .collect()
+}
+
+fn has_speed_samples(points: &[TrackPoint]) -> bool {
+    points.windows(2).any(|pair| {
+        let a = &pair[0];
+        let b = &pair[1];
+        if let (Some(time_a), Some(time_b)) = (a.time, b.time) {
+            return (time_b - time_a).num_seconds() > 0;
+        }
+        false
+    })
 }
 
 fn haversine_distance(lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> f64 {

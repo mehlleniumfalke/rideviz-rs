@@ -21,7 +21,5 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 dashmap = "6"
 chrono = { version = "0.4", features = ["serde"] }
-tower = "0.4"
-
-[dev-dependencies]
-tempfile = "3"
+apng = { version = "0.3", features = ["png"] }
+rayon = "1"
