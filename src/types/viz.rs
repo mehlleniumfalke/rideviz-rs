@@ -27,6 +27,14 @@ pub enum AnimationEasing {
     EaseInOutSine,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum OutputFormat {
+    #[default]
+    Apng,
+    Webm,
+}
+
 #[derive(Debug, Clone)]
 pub struct VizData {
     pub points: Vec<RoutePoint>,
@@ -86,4 +94,5 @@ pub struct OutputConfig {
     pub width: u32,
     pub height: u32,
     pub background: Option<(u8, u8, u8, u8)>,
+    pub watermark: bool,
 }

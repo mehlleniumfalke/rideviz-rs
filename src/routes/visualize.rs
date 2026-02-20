@@ -12,7 +12,7 @@ use crate::pipeline::{animate, prepare, rasterize, render};
 use crate::state::AppState;
 use crate::types::{
     gradient::Gradient,
-    viz::{ColorByMetric, OutputConfig, RenderOptions},
+    viz::{ColorByMetric, OutputConfig, OutputFormat, RenderOptions},
 };
 
 pub fn router() -> Router<AppState> {
@@ -35,8 +35,16 @@ struct VisualizeRequest {
     #[serde(default = "default_true")]
     glow: bool,
     background: Option<String>,
+    duration_seconds: Option<f32>,
+    fps: Option<u32>,
+    #[serde(default)]
     animation_frames: Option<u32>,
+    #[serde(default)]
     animation_duration_ms: Option<u32>,
+    #[serde(default = "default_true")]
+    watermark: bool,
+    #[serde(default)]
+    format: OutputFormat,
 }
 
 fn default_gradient() -> String {
@@ -91,14 +99,21 @@ async fn visualize(
         })?),
         None => None,
     };
-    options.animation_frames = req
-        .animation_frames
-        .unwrap_or(options.animation_frames)
-        .clamp(8, 180);
-    options.animation_duration_ms = req
-        .animation_duration_ms
-        .unwrap_or(options.animation_duration_ms)
-        .clamp(500, 8000);
+
+    let (animation_frames, animation_duration_ms) = if let Some(duration_secs) = req.duration_seconds {
+        let duration_secs = duration_secs.clamp(3.0, 60.0);
+        let fps = req.fps.unwrap_or(30).clamp(15, 60);
+        let frames = (duration_secs * fps as f32).round() as u32;
+        let duration_ms = (duration_secs * 1000.0).round() as u32;
+        (frames, duration_ms)
+    } else {
+        let frames = req.animation_frames.unwrap_or(options.animation_frames).clamp(8, 180);
+        let duration_ms = req.animation_duration_ms.unwrap_or(options.animation_duration_ms).clamp(500, 8000);
+        (frames, duration_ms)
+    };
+
+    options.animation_frames = animation_frames;
+    options.animation_duration_ms = animation_duration_ms;
 
     let megapixels = (options.width as f64 * options.height as f64) / 1_000_000.0;
     let frame_ceiling = if megapixels > 6.0 {
@@ -132,9 +147,11 @@ async fn visualize(
         width: options.width,
         height: options.height,
         background,
+        watermark: req.watermark,
     };
 
-    let image_bytes = if req.animation_frames.is_none() && req.animation_duration_ms.is_none() {
+    let is_static = req.duration_seconds.is_none() && req.animation_frames.is_none() && req.animation_duration_ms.is_none();
+    let image_bytes = if is_static {
         // Static image - render single frame at progress=1.0 (full route)
         tracing::info!(
             "Generating static route-3d image for file {} ({}x{}, gradient: {})",
@@ -146,21 +163,28 @@ async fn visualize(
         let svg = render::render_svg_frame(&viz_data, &options, 1.0)?;
         rasterize::rasterize(&svg, &output_config)?
     } else {
-        // Animated APNG
+        // Animated output
         tracing::info!(
-            "Generating route-3d animation for file {} ({}x{}, gradient: {})",
+            "Generating route-3d animation for file {} ({}x{}, gradient: {}, format: {:?})",
             req.file_id,
             options.width,
             options.height,
-            options.gradient.name
+            options.gradient.name,
+            req.format
         );
-        animate::render_apng(&viz_data, &options, &output_config)?
+        match req.format {
+            OutputFormat::Apng => animate::render_apng(&viz_data, &options, &output_config)?,
+            OutputFormat::Webm => animate::render_webm(&viz_data, &options, &output_config)?,
+        }
     };
     
-    let (content_type, description) = if req.animation_frames.is_none() && req.animation_duration_ms.is_none() {
+    let (content_type, description) = if is_static {
         ("image/png", "PNG")
     } else {
-        ("image/apng", "APNG")
+        match req.format {
+            OutputFormat::Apng => ("image/apng", "APNG"),
+            OutputFormat::Webm => ("video/webm", "WebM"),
+        }
     };
     
     tracing::info!("Generated {}: {} bytes", description, image_bytes.len());

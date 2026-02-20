@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { uploadFile, getVisualization } from '../../api/client';
-import type { AvailableData, ColorByMetric, GradientName, BackgroundColor } from '../../types/api';
+import type { AvailableData, ColorByMetric, GradientName, BackgroundColor, OutputFormat } from '../../types/api';
 
 import UploadZone from './UploadZone';
 import GradientPicker from './GradientPicker';
@@ -8,6 +8,7 @@ import AdvancedPanel from './AdvancedPanel';
 import PreviewPanel from './PreviewPanel';
 import ColorByPicker from './ColorByPicker';
 import BackgroundPicker from './BackgroundPicker';
+import DurationControl from './DurationControl';
 
 interface ToolPageProps {
   onNavigateHome: () => void;
@@ -22,9 +23,24 @@ interface VizConfig {
   glow: boolean;
   background: BackgroundColor;
   animated: boolean;
+  duration: number;
+  fps: number;
 }
 
 type AnimationMode = 'preview' | 'download';
+
+const STORAGE_KEY_DURATION = 'rideviz_duration';
+const STORAGE_KEY_FPS = 'rideviz_fps';
+
+function getStoredDuration(): number {
+  const stored = localStorage.getItem(STORAGE_KEY_DURATION);
+  return stored ? Number(stored) : 9;
+}
+
+function getStoredFps(): number {
+  const stored = localStorage.getItem(STORAGE_KEY_FPS);
+  return stored ? Number(stored) : 30;
+}
 
 function getAnimationProfile(mode: AnimationMode): { frames: number; durationMs: number } {
   return mode === 'preview'
@@ -47,6 +63,8 @@ export default function ToolPage({ onNavigateHome }: ToolPageProps) {
     glow: false,
     background: 'white',
     animated: true,
+    duration: getStoredDuration(),
+    fps: getStoredFps(),
   });
 
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -102,7 +120,6 @@ export default function ToolPage({ onNavigateHome }: ToolPageProps) {
       abortControllerRef.current = controller;
 
       try {
-        const animationProfile = getAnimationProfile('preview');
         const requestParams: any = {
           file_id: fileId,
           gradient: config.gradient,
@@ -114,10 +131,10 @@ export default function ToolPage({ onNavigateHome }: ToolPageProps) {
           background: config.background,
         };
 
-        // Only add animation params if animated is enabled
         if (config.animated) {
-          requestParams.animation_frames = animationProfile.frames;
-          requestParams.animation_duration_ms = animationProfile.durationMs;
+          const previewDuration = Math.min(config.duration, 10);
+          requestParams.duration_seconds = previewDuration;
+          requestParams.fps = Math.min(config.fps, 30);
         }
 
         const blob = await getVisualization(requestParams, controller.signal);
@@ -149,7 +166,6 @@ export default function ToolPage({ onNavigateHome }: ToolPageProps) {
     if (!fileId) return;
 
     try {
-      const animationProfile = getAnimationProfile('download');
       const requestParams: any = {
         file_id: fileId,
         gradient: config.gradient,
@@ -161,10 +177,13 @@ export default function ToolPage({ onNavigateHome }: ToolPageProps) {
         background: config.background,
       };
 
-      // Only add animation params if animated is enabled
       if (config.animated) {
-        requestParams.animation_frames = animationProfile.frames;
-        requestParams.animation_duration_ms = animationProfile.durationMs;
+        requestParams.duration_seconds = config.duration;
+        requestParams.fps = config.fps;
+        requestParams.format = 'webm';
+        
+        localStorage.setItem(STORAGE_KEY_DURATION, String(config.duration));
+        localStorage.setItem(STORAGE_KEY_FPS, String(config.fps));
       }
 
       const blob = await getVisualization(requestParams);
@@ -172,7 +191,7 @@ export default function ToolPage({ onNavigateHome }: ToolPageProps) {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = config.animated ? 'rideviz-route.apng' : 'rideviz-route.png';
+      a.download = config.animated ? 'rideviz-route.webm' : 'rideviz-route.png';
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -268,6 +287,14 @@ export default function ToolPage({ onNavigateHome }: ToolPageProps) {
                 value={config.background}
                 onChange={(background) => setConfig({ ...config, background })}
               />
+
+              {config.animated && (
+                <DurationControl
+                  duration={config.duration}
+                  fps={config.fps}
+                  onChange={(updates) => setConfig({ ...config, ...updates })}
+                />
+              )}
 
               <AdvancedPanel
                 strokeWidth={config.strokeWidth}

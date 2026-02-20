@@ -23,3 +23,6 @@ dashmap = "6"
 chrono = { version = "0.4", features = ["serde"] }
 apng = { version = "0.3", features = ["png"] }
 rayon = "1"
+ffmpeg-next = "7"
+png = "0.17"
+tempfile = "3"

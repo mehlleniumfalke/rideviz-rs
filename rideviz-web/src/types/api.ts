@@ -26,6 +26,7 @@ export interface Metrics {
 export type Format = 'story' | 'post' | 'wide' | 'custom';
 export type ColorByMetric = 'elevation' | 'speed' | 'heartrate' | 'power';
 export type BackgroundColor = 'transparent' | 'white' | 'black';
+export type OutputFormat = 'apng' | 'webm';
 export type GradientName =
   | 'fire'
   | 'ocean'
@@ -45,6 +46,10 @@ export interface VisualizeRequest {
   color_by?: ColorByMetric;
   glow?: boolean;
   background?: BackgroundColor;
+  duration_seconds?: number;
+  fps?: number;
   animation_frames?: number;
   animation_duration_ms?: number;
+  watermark?: boolean;
+  format?: OutputFormat;
 }
