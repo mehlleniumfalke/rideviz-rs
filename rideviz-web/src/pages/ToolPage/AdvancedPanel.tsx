@@ -81,15 +81,6 @@ export default function AdvancedPanel({
           <span style={{ fontSize: 'var(--text-xs)' }}>Enable glow effect</span>
         </label>
 
-        {/* Animated */}
-        <label style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', cursor: 'pointer' }}>
-          <input
-            type="checkbox"
-            checked={animated}
-            onChange={(e) => onChange({ animated: e.target.checked })}
-          />
-          <span style={{ fontSize: 'var(--text-xs)' }}>3D animation</span>
-        </label>
       </div>
     </div>
   );

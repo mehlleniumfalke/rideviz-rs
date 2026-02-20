@@ -56,7 +56,7 @@ export default function ToolPage({ onNavigateHome }: ToolPageProps) {
     smoothing: 30,
     glow: false,
     background: 'white',
-    animated: true,
+    animated: false,
     duration: getStoredDuration(),
     fps: getStoredFps(),
   });
