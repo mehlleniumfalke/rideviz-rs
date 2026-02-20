@@ -26,7 +26,7 @@ export interface Metrics {
 export type Format = 'story' | 'post' | 'wide' | 'custom';
 export type ColorByMetric = 'elevation' | 'speed' | 'heartrate' | 'power';
 export type BackgroundColor = 'transparent' | 'white' | 'black';
-export type OutputFormat = 'apng' | 'webm';
+export type OutputFormat = 'apng';
 export type GradientName =
   | 'fire'
   | 'ocean'

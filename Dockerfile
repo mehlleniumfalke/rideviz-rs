@@ -18,14 +18,6 @@ WORKDIR /build
 RUN apt-get update && apt-get install -y \
     pkg-config \
     libssl-dev \
-    clang \
-    libavutil-dev \
-    libavformat-dev \
-    libavcodec-dev \
-    libavfilter-dev \
-    libavdevice-dev \
-    libswscale-dev \
-    libswresample-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy manifests
@@ -52,13 +44,6 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y \
     ca-certificates \
     fonts-dejavu-core \
-    libavutil57 \
-    libavformat59 \
-    libavcodec59 \
-    libavfilter8 \
-    libavdevice59 \
-    libswscale6 \
-    libswresample4 \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy binary from builder

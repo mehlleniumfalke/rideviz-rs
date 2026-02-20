@@ -32,7 +32,6 @@ pub enum AnimationEasing {
 pub enum OutputFormat {
     #[default]
     Apng,
-    Webm,
 }
 
 #[derive(Debug, Clone)]

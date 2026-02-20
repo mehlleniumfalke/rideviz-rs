@@ -174,8 +174,7 @@ export default function ToolPage({ onNavigateHome }: ToolPageProps) {
       if (config.animated) {
         requestParams.duration_seconds = config.duration;
         requestParams.fps = config.fps;
-        requestParams.format = 'webm';
-        
+
         localStorage.setItem(STORAGE_KEY_DURATION, String(config.duration));
         localStorage.setItem(STORAGE_KEY_FPS, String(config.fps));
       }
@@ -185,7 +184,7 @@ export default function ToolPage({ onNavigateHome }: ToolPageProps) {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = config.animated ? 'rideviz-route.webm' : 'rideviz-route.png';
+      a.download = config.animated ? 'rideviz-route.apng' : 'rideviz-route.png';
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);

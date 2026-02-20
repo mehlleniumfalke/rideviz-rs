@@ -172,19 +172,13 @@ async fn visualize(
             options.gradient.name,
             req.format
         );
-        match req.format {
-            OutputFormat::Apng => animate::render_apng(&viz_data, &options, &output_config)?,
-            OutputFormat::Webm => animate::render_webm(&viz_data, &options, &output_config)?,
-        }
+        animate::render_apng(&viz_data, &options, &output_config)?
     };
     
     let (content_type, description) = if is_static {
         ("image/png", "PNG")
     } else {
-        match req.format {
-            OutputFormat::Apng => ("image/apng", "APNG"),
-            OutputFormat::Webm => ("video/webm", "WebM"),
-        }
+        ("image/apng", "APNG")
     };
     
     tracing::info!("Generated {}: {} bytes", description, image_bytes.len());
