@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import posthog from 'posthog-js';
 import ToolPage from './pages/ToolPage';
 
 type RoutePath = '/' | '/app';
@@ -9,6 +10,10 @@ function getRoutePath(): RoutePath {
 
 function App() {
   const [routePath, setRoutePath] = useState<RoutePath>(getRoutePath());
+
+  useEffect(() => {
+    posthog.capture('$pageview', { path: routePath });
+  }, [routePath]);
 
   useEffect(() => {
     function onPopState() {

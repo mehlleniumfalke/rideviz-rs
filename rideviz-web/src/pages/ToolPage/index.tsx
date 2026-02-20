@@ -227,6 +227,7 @@ export default function ToolPage({ onNavigateHome }: ToolPageProps) {
 
       {/* Main Layout: Animation centered, controls on right */}
       <div
+        className="tool-layout"
         style={{
           display: 'grid',
           gridTemplateColumns: '1fr 320px',
@@ -245,7 +246,7 @@ export default function ToolPage({ onNavigateHome }: ToolPageProps) {
         />
 
         {/* Right: Controls */}
-        <aside style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
+        <aside className="tool-controls" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
           {!fileId ? (
             <UploadZone
               onFileSelect={handleFileSelect}
@@ -303,8 +304,18 @@ export default function ToolPage({ onNavigateHome }: ToolPageProps) {
       </div>
 
       <style>{`
-        @media (max-width: 800px) {
-          .tool-layout { grid-template-columns: 1fr !important; }
+        @media (max-width: 768px) {
+          .tool-layout {
+            grid-template-columns: 1fr !important;
+            min-height: unset !important;
+          }
+          .tool-controls {
+            order: 1;
+          }
+          .preview-panel {
+            order: 2;
+            min-height: 280px !important;
+          }
         }
       `}</style>
     </div>

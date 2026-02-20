@@ -29,6 +29,7 @@ export default function PreviewPanel({
 
   return (
     <div
+      className="preview-panel"
       style={{
         border: 'var(--border)',
         display: 'flex',
