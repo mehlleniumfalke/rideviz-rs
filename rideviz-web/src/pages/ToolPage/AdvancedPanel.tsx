@@ -18,7 +18,6 @@ export default function AdvancedPanel({
   padding,
   smoothing,
   glow,
-  animated,
   onChange,
 }: AdvancedPanelProps) {
   return (
