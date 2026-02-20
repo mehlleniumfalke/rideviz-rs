@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { uploadFile, getVisualization } from '../../api/client';
-import type { AvailableData, ColorByMetric, GradientName, BackgroundColor, OutputFormat } from '../../types/api';
+import type { AvailableData, ColorByMetric, GradientName, BackgroundColor } from '../../types/api';
 
 import UploadZone from './UploadZone';
 import GradientPicker from './GradientPicker';
@@ -27,7 +27,6 @@ interface VizConfig {
   fps: number;
 }
 
-type AnimationMode = 'preview' | 'download';
 
 const STORAGE_KEY_DURATION = 'rideviz_duration';
 const STORAGE_KEY_FPS = 'rideviz_fps';
@@ -42,11 +41,6 @@ function getStoredFps(): number {
   return stored ? Number(stored) : 30;
 }
 
-function getAnimationProfile(mode: AnimationMode): { frames: number; durationMs: number } {
-  return mode === 'preview'
-    ? { frames: 54, durationMs: 3700 }
-    : { frames: 100, durationMs: 4600 };
-}
 
 export default function ToolPage({ onNavigateHome }: ToolPageProps) {
   const [fileId, setFileId] = useState<string | null>(null);
