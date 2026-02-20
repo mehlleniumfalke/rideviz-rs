@@ -7,6 +7,7 @@ mod types;
 
 use axum::Router;
 use tower_http::cors::{Any, CorsLayer};
+use tower_http::services::{ServeDir, ServeFile};
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -35,10 +36,14 @@ async fn main() {
     });
 
     // Build router
+    let serve_dir = ServeDir::new("assets/web")
+        .not_found_service(ServeFile::new("assets/web/index.html"));
+
     let app = Router::new()
         .merge(routes::health::router())
         .merge(routes::upload::router())
         .merge(routes::visualize::router())
+        .fallback_service(serve_dir)
         .layer(
             CorsLayer::new()
                 .allow_origin(Any)

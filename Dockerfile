@@ -1,3 +1,14 @@
+# Frontend build stage
+FROM node:22-slim as frontend-builder
+
+WORKDIR /frontend
+
+COPY rideviz-web/package.json rideviz-web/package-lock.json ./
+RUN npm ci
+
+COPY rideviz-web/ ./
+RUN npm run build
+
 # Build stage
 FROM rust:1.85-slim as builder
 
@@ -52,6 +63,9 @@ RUN apt-get update && apt-get install -y \
 
 # Copy binary from builder
 COPY --from=builder /build/target/release/rideviz-rs /app/rideviz-rs
+
+# Copy frontend from frontend-builder
+COPY --from=frontend-builder /frontend/dist /app/assets/web
 
 # Create non-root user
 RUN useradd -m -u 1001 rideviz && \
