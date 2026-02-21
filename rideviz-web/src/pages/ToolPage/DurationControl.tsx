@@ -1,6 +1,8 @@
 interface DurationControlProps {
   duration: number;
   fps: number;
+  width?: number;
+  height?: number;
   onChange: (config: { duration?: number; fps?: number }) => void;
 }
 
@@ -46,8 +48,14 @@ function findNearestSnapPoint(value: number): number {
   return nearest;
 }
 
-export default function DurationControl({ duration, fps, onChange }: DurationControlProps) {
-  const estimatedSize = estimateFileSizeKB(duration, fps);
+export default function DurationControl({
+  duration,
+  fps,
+  width = 1920,
+  height = 1080,
+  onChange,
+}: DurationControlProps) {
+  const estimatedSize = estimateFileSizeKB(duration, fps, width, height);
 
   const handleSliderChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = Number(e.target.value);

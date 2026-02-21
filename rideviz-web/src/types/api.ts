@@ -23,10 +23,26 @@ export interface Metrics {
   max_power: number | null;
 }
 
-export type Format = 'story' | 'post' | 'wide' | 'custom';
+export type ExportPreset =
+  | 'story_9x16'
+  | 'instagram_post_portrait_4x5'
+  | 'instagram_post_square_1x1'
+  | 'x_post_16x9'
+  | 'facebook_feed_landscape'
+  | 'facebook_feed_square'
+  | 'hd_landscape_16x9';
 export type ColorByMetric = 'elevation' | 'speed' | 'heartrate' | 'power';
 export type BackgroundColor = 'transparent' | 'white' | 'black';
 export type OutputFormat = 'apng';
+export type StatKey =
+  | 'distance'
+  | 'duration'
+  | 'elevation_gain'
+  | 'avg_speed'
+  | 'avg_heart_rate'
+  | 'max_heart_rate'
+  | 'avg_power'
+  | 'max_power';
 export type GradientName =
   | 'fire'
   | 'ocean'
@@ -40,6 +56,8 @@ export type GradientName =
 export interface VisualizeRequest {
   file_id: string;
   gradient: GradientName;
+  width?: number;
+  height?: number;
   stroke_width?: number;
   padding?: number;
   smoothing?: number;
@@ -52,4 +70,5 @@ export interface VisualizeRequest {
   animation_duration_ms?: number;
   watermark?: boolean;
   format?: OutputFormat;
+  stats?: StatKey[];
 }

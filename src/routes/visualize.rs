@@ -6,13 +6,15 @@ use axum::{
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 
 use crate::error::AppError;
 use crate::pipeline::{animate, prepare, rasterize, render};
 use crate::state::AppState;
 use crate::types::{
+    activity::{AvailableData, Metrics},
     gradient::Gradient,
-    viz::{ColorByMetric, OutputConfig, OutputFormat, RenderOptions},
+    viz::{ColorByMetric, OutputConfig, OutputFormat, RenderOptions, StatOverlayItem},
 };
 
 pub fn router() -> Router<AppState> {
@@ -25,6 +27,8 @@ struct VisualizeRequest {
     file_id: String,
     #[serde(default = "default_gradient")]
     gradient: String,
+    width: Option<u32>,
+    height: Option<u32>,
     color_by: Option<String>,
     #[serde(default = "default_stroke_width")]
     stroke_width: f32,
@@ -43,6 +47,8 @@ struct VisualizeRequest {
     animation_duration_ms: Option<u32>,
     #[serde(default = "default_true")]
     watermark: bool,
+    #[serde(default)]
+    stats: Option<Vec<String>>,
     #[serde(default)]
     format: OutputFormat,
 }
@@ -67,6 +73,29 @@ fn default_true() -> bool {
     true
 }
 
+fn validate_dimensions(width: u32, height: u32) -> Result<(), AppError> {
+    const MIN_DIM: u32 = 320;
+    const MAX_DIM: u32 = 4096;
+    const MAX_MEGAPIXELS: f64 = 10.0;
+
+    if !(MIN_DIM..=MAX_DIM).contains(&width) || !(MIN_DIM..=MAX_DIM).contains(&height) {
+        return Err(AppError::BadRequest(format!(
+            "Invalid dimensions: {}x{}. Width/height must be between {} and {}",
+            width, height, MIN_DIM, MAX_DIM
+        )));
+    }
+
+    let megapixels = (width as f64 * height as f64) / 1_000_000.0;
+    if megapixels > MAX_MEGAPIXELS {
+        return Err(AppError::BadRequest(format!(
+            "Image too large: {}x{} ({:.2} MP). Max allowed is {:.1} MP",
+            width, height, megapixels, MAX_MEGAPIXELS
+        )));
+    }
+
+    Ok(())
+}
+
 /// Maps smoothing level (0-100) to internal route rendering parameters.
 /// Returns (simplify stride, curve tension).
 fn smoothing_to_route_params(level: usize) -> (usize, f32) {
@@ -74,6 +103,113 @@ fn smoothing_to_route_params(level: usize) -> (usize, f32) {
     let simplify = (1.0 + t * 29.0).round() as usize; // 1 -> 30
     let tension = t * 0.45; // 0.0 -> 0.45
     (simplify, tension)
+}
+
+fn format_duration(duration_seconds: u64) -> String {
+    let hours = duration_seconds / 3600;
+    let minutes = (duration_seconds % 3600) / 60;
+    let seconds = duration_seconds % 60;
+    if hours > 0 {
+        format!("{}:{:02}:{:02}", hours, minutes, seconds)
+    } else {
+        format!("{:02}:{:02}", minutes, seconds)
+    }
+}
+
+fn stat_key_to_overlay(
+    key: &str,
+    metrics: &Metrics,
+    available_data: &AvailableData,
+) -> Option<(String, String)> {
+    match key {
+        "distance" => Some(("DIST".to_string(), format!("{:.1} km", metrics.distance_km))),
+        "duration" if metrics.duration_seconds > 0 => {
+            Some(("DUR".to_string(), format_duration(metrics.duration_seconds)))
+        }
+        "elevation_gain" if available_data.has_elevation => {
+            Some(("GAIN".to_string(), format!("{:.0} m", metrics.elevation_gain_m)))
+        }
+        "avg_speed" if metrics.duration_seconds > 0 => {
+            Some(("AVG SPD".to_string(), format!("{:.1} km/h", metrics.avg_speed_kmh)))
+        }
+        "avg_heart_rate" if available_data.has_heart_rate => metrics
+            .avg_heart_rate
+            .map(|v| ("AVG HR".to_string(), format!("{} bpm", v))),
+        "max_heart_rate" if available_data.has_heart_rate => metrics
+            .max_heart_rate
+            .map(|v| ("MAX HR".to_string(), format!("{} bpm", v))),
+        "avg_power" if available_data.has_power => metrics
+            .avg_power
+            .map(|v| ("AVG PWR".to_string(), format!("{} W", v))),
+        "max_power" if available_data.has_power => metrics
+            .max_power
+            .map(|v| ("MAX PWR".to_string(), format!("{} W", v))),
+        _ => None,
+    }
+}
+
+fn build_stats_overlay_items(
+    requested_keys: Option<&Vec<String>>,
+    metrics: &Metrics,
+    available_data: &AvailableData,
+) -> Result<Vec<StatOverlayItem>, AppError> {
+    let Some(keys) = requested_keys else {
+        return Ok(Vec::new());
+    };
+    if keys.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let allowed: HashSet<&str> = [
+        "distance",
+        "duration",
+        "elevation_gain",
+        "avg_speed",
+        "avg_heart_rate",
+        "max_heart_rate",
+        "avg_power",
+        "max_power",
+    ]
+    .into_iter()
+    .collect();
+
+    for key in keys {
+        if !allowed.contains(key.as_str()) {
+            return Err(AppError::BadRequest(format!(
+                "Invalid stat key: {}. Allowed: distance, duration, elevation_gain, avg_speed, avg_heart_rate, max_heart_rate, avg_power, max_power",
+                key
+            )));
+        }
+    }
+
+    let mut seen = HashSet::new();
+    let mut items: Vec<(String, String)> = Vec::new();
+    for key in keys {
+        if !seen.insert(key.to_string()) {
+            continue;
+        }
+        if let Some(entry) = stat_key_to_overlay(key, metrics, available_data) {
+            items.push(entry);
+        }
+    }
+
+    let item_count = items.len().max(1) as f64;
+    Ok(items
+        .into_iter()
+        .enumerate()
+        .map(|(idx, (label, value))| {
+            let t = if item_count <= 1.0 {
+                0.5
+            } else {
+                idx as f64 / (item_count - 1.0)
+            };
+            StatOverlayItem {
+                label,
+                value,
+                color_t: t,
+            }
+        })
+        .collect())
 }
 
 async fn visualize(
@@ -86,6 +222,19 @@ async fn visualize(
 
     let mut options = RenderOptions::route_3d_defaults();
     options.gradient = Gradient::get(&req.gradient).unwrap_or_else(Gradient::default);
+    match (req.width, req.height) {
+        (Some(width), Some(height)) => {
+            validate_dimensions(width, height)?;
+            options.width = width;
+            options.height = height;
+        }
+        (None, None) => {}
+        _ => {
+            return Err(AppError::BadRequest(
+                "Both width and height must be provided together".to_string(),
+            ))
+        }
+    }
     options.stroke_width = req.stroke_width;
     options.padding = req.padding;
     options.smoothing = req.smoothing;
@@ -130,6 +279,11 @@ async fn visualize(
     options.curve_tension = curve_tension;
 
     let viz_data = prepare::prepare(&processed, &options)?;
+    let stats_overlay = build_stats_overlay_items(
+        req.stats.as_ref(),
+        &processed.metrics,
+        &processed.available_data,
+    )?;
     
     let background = match req.background.as_deref() {
         Some("white") => Some((255, 255, 255, 255)),
@@ -160,7 +314,7 @@ async fn visualize(
             options.height,
             options.gradient.name
         );
-        let svg = render::render_svg_frame(&viz_data, &options, 1.0)?;
+        let svg = render::render_svg_frame(&viz_data, &options, 1.0, &stats_overlay)?;
         rasterize::rasterize(&svg, &output_config)?
     } else {
         // Animated output
@@ -172,7 +326,7 @@ async fn visualize(
             options.gradient.name,
             req.format
         );
-        animate::render_apng(&viz_data, &options, &output_config)?
+        animate::render_apng(&viz_data, &options, &output_config, &stats_overlay)?
     };
     
     let (content_type, description) = if is_static {

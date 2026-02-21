@@ -43,7 +43,11 @@ WORKDIR /app
 # Install runtime dependencies
 RUN apt-get update && apt-get install -y \
     ca-certificates \
+    curl \
     fonts-dejavu-core \
+    && mkdir -p /app/assets/fonts \
+    && curl -fsSL "https://raw.githubusercontent.com/vercel/geist-font/main/fonts/Geist/otf/Geist-Regular.otf" -o /app/assets/fonts/Geist-Regular.otf \
+    && curl -fsSL "https://raw.githubusercontent.com/vercel/geist-font/main/fonts/GeistPixel/ttf/GeistPixel-Square.ttf" -o /app/assets/fonts/GeistPixel-Square.ttf \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy binary from builder

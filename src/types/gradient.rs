@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Gradient {
     pub name: &'static str,
-    pub colors: [&'static str; 2],
+    pub colors: Vec<&'static str>,
 }
 
 impl Gradient {
@@ -11,35 +11,35 @@ impl Gradient {
         match name {
             "fire" => Some(Self {
                 name: "fire",
-                colors: ["#FF3366", "#FF9933"],
+                colors: vec!["#FF3366", "#FF6600", "#FF9933"],
             }),
             "ocean" => Some(Self {
                 name: "ocean",
-                colors: ["#0055FF", "#00D1FF"],
+                colors: vec!["#0055FF", "#0099DD", "#00D1FF"],
             }),
             "sunset" => Some(Self {
                 name: "sunset",
-                colors: ["#FF7E5F", "#FEB47B"],
+                colors: vec!["#FF2D55", "#FF7E5F", "#FEB47B"],
             }),
             "forest" => Some(Self {
                 name: "forest",
-                colors: ["#1D976C", "#93F9B9"],
+                colors: vec!["#1D976C", "#4CD964", "#93F9B9"],
             }),
             "violet" => Some(Self {
                 name: "violet",
-                colors: ["#8E2DE2", "#4A00E0"],
+                colors: vec!["#FF0080", "#8E2DE2", "#4A00E0"],
             }),
             "rideviz" => Some(Self {
                 name: "rideviz",
-                colors: ["#00C2FF", "#00FF94"],
+                colors: vec!["#00C2FF", "#00EABD", "#00FF94"],
             }),
             "white" => Some(Self {
                 name: "white",
-                colors: ["#FFFFFF", "#FFFFFF"],
+                colors: vec!["#FFFFFF", "#FFFFFF", "#FFFFFF"],
             }),
             "black" => Some(Self {
                 name: "black",
-                colors: ["#000000", "#000000"],
+                colors: vec!["#000000", "#000000", "#000000"],
             }),
             _ => None,
         }
@@ -48,17 +48,28 @@ impl Gradient {
     pub fn default() -> Self {
         Self {
             name: "fire",
-            colors: ["#FF3366", "#FF9933"],
+            colors: vec!["#FF3366", "#FF6600", "#FF9933"],
         }
     }
 
     pub fn interpolate(&self, t: f64) -> String {
         let t = t.clamp(0.0, 1.0);
-        let start = parse_hex_color(self.colors[0]).unwrap_or((255, 255, 255));
-        let end = parse_hex_color(self.colors[1]).unwrap_or((255, 255, 255));
-        let r = lerp_u8(start.0, end.0, t);
-        let g = lerp_u8(start.1, end.1, t);
-        let b = lerp_u8(start.2, end.2, t);
+        let stops = &self.colors;
+        if stops.is_empty() {
+            return "#FFFFFF".to_string();
+        }
+        if stops.len() == 1 {
+            return stops[0].to_string();
+        }
+        let segments = (stops.len() - 1) as f64;
+        let scaled = t * segments;
+        let idx = (scaled.floor() as usize).min(stops.len() - 2);
+        let local_t = scaled - idx as f64;
+        let start = parse_hex_color(stops[idx]).unwrap_or((255, 255, 255));
+        let end = parse_hex_color(stops[idx + 1]).unwrap_or((255, 255, 255));
+        let r = lerp_u8(start.0, end.0, local_t);
+        let g = lerp_u8(start.1, end.1, local_t);
+        let b = lerp_u8(start.2, end.2, local_t);
         format!("#{:02X}{:02X}{:02X}", r, g, b)
     }
 }

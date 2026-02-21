@@ -1,6 +1,6 @@
 use crate::error::RenderError;
 use crate::types::gradient::Gradient;
-use crate::types::viz::{RenderOptions, RoutePoint, VizData};
+use crate::types::viz::{RenderOptions, RoutePoint, StatOverlayItem, VizData};
 
 const ELEVATION_GAMMA: f64 = 0.82;
 const EXTRUSION_RATIO: f64 = 0.24;
@@ -11,6 +11,8 @@ const ISOMETRIC_ANGLE_DEG: f64 = 30.0;
 const WALL_FILL_OPACITY: f64 = 0.24;
 const WALL_SUBDIVISIONS: usize = 4;
 const COLOR_BUCKETS: usize = 48;
+const LEGACY_WIDE_WIDTH: f64 = 1920.0;
+const LEGACY_WIDE_HEIGHT: f64 = 1080.0;
 
 #[derive(Clone, Copy)]
 struct ProjectedPoint {
@@ -23,14 +25,16 @@ pub fn render_svg_frame(
     data: &VizData,
     options: &RenderOptions,
     progress: f64,
+    stats: &[StatOverlayItem],
 ) -> Result<String, RenderError> {
-    render_route_3d(&data.points, options, progress.clamp(0.0, 1.0))
+    render_route_3d(&data.points, options, progress.clamp(0.0, 1.0), stats)
 }
 
 fn render_route_3d(
     points: &[RoutePoint],
     options: &RenderOptions,
     progress: f64,
+    stats: &[StatOverlayItem],
 ) -> Result<String, RenderError> {
     let width = options.width as f64;
     let height = options.height as f64;
@@ -46,12 +50,15 @@ fn render_route_3d(
     let elev_range = (max_elev - min_elev).max(f64::EPSILON);
     let elevation_scale =
         ((max_elev - min_elev) / ELEVATION_RANGE_DIVISOR).clamp(ELEVATION_SCALE_MIN, ELEVATION_SCALE_MAX);
-    let extrusion_height = view_height * EXTRUSION_RATIO * elevation_scale;
+    // Keep a fixed legacy-wide camera basis (pre multi-format behavior) for all outputs.
+    let projection_width = (LEGACY_WIDE_WIDTH - 2.0 * padding).max(1.0);
+    let projection_height = (LEGACY_WIDE_HEIGHT - 2.0 * padding).max(1.0);
+    let extrusion_height = projection_height * EXTRUSION_RATIO * elevation_scale;
 
     let projected = project_to_isometric(
         &filtered_points,
-        view_width,
-        view_height,
+        projection_width,
+        projection_height,
         min_elev,
         elev_range,
         extrusion_height,
@@ -83,8 +90,23 @@ fn render_route_3d(
         build_route_path(&ground_coords, options.curve_tension),
         (options.stroke_width * 0.9).max(1.0)
     );
-    let glow_filter = glow_filter_def(options.glow);
-    let glow_path = if options.glow {
+    let outline_path = format!(
+        r##"<path d="{}" fill="none" stroke="#FFFFFF" stroke-opacity="0.55" stroke-width="{:.1}" stroke-linecap="round" stroke-linejoin="round"/>"##,
+        build_route_path(&top_coords, options.curve_tension),
+        options.stroke_width * 1.5
+    );
+
+    let has_extent = smoothed.len() >= 2 && {
+        let first = smoothed.first().unwrap().top;
+        smoothed.iter().any(|p| {
+            let dx = p.top.0 - first.0;
+            let dy = p.top.1 - first.1;
+            dx * dx + dy * dy > 1.0
+        })
+    };
+
+    let glow_filter = glow_filter_def(options.glow && has_extent);
+    let glow_path = if options.glow && has_extent {
         if options.color_by.is_some() {
             let glow_segments = build_segment_paths(
                 &top_coords,
@@ -104,6 +126,7 @@ fn render_route_3d(
         String::new()
     };
     let endpoint_dots = build_3d_endpoint_dots(&top_coords, options);
+    let stats_overlay = build_stats_overlay(stats, options);
 
     Ok(format!(
         r#"<svg xmlns="http://www.w3.org/2000/svg" width="{}" height="{}" viewBox="0 0 {} {}">
@@ -111,6 +134,8 @@ fn render_route_3d(
     {}
     {}
   </defs>
+  {}
+  {}
   {}
   {}
   {}
@@ -125,9 +150,11 @@ fn render_route_3d(
         glow_filter,
         walls,
         ground_path,
+        outline_path,
         glow_path,
         top_path,
-        endpoint_dots
+        endpoint_dots,
+        stats_overlay
     ))
 }
 
@@ -161,8 +188,8 @@ fn route_elevation_bounds(points: &[&RoutePoint]) -> Result<(f64, f64), RenderEr
 
 fn project_to_isometric(
     points: &[&RoutePoint],
-    view_width: f64,
-    view_height: f64,
+    projection_width: f64,
+    projection_height: f64,
     min_elev: f64,
     elev_range: f64,
     extrusion_height: f64,
@@ -174,8 +201,8 @@ fn project_to_isometric(
     points
         .iter()
         .map(|point| {
-            let x = point.x * view_width;
-            let y = (1.0 - point.y) * view_height;
+            let x = point.x * projection_width;
+            let y = (1.0 - point.y) * projection_height;
             let ground_x = x * cos_angle + y * sin_angle;
             let ground_y = -x * sin_angle + y * cos_angle;
             let norm_elev = point
@@ -273,6 +300,43 @@ fn split_projected_points(
     (ground_coords, top_coords, top_values)
 }
 
+fn build_stats_overlay(stats: &[StatOverlayItem], options: &RenderOptions) -> String {
+    if stats.is_empty() {
+        return String::new();
+    }
+
+    let start_x = options.padding as f64 + 14.0;
+    let start_y = options.padding as f64 + 28.0;
+    let font_size = ((options.height as f64) * 0.024).clamp(12.0, 34.0);
+    let line_gap = (font_size * 1.38).clamp(18.0, 52.0);
+    let label_dx = (font_size * 6.1).clamp(72.0, 280.0);
+
+    let lines: String = stats
+        .iter()
+        .enumerate()
+        .map(|(idx, stat)| {
+            let y = start_y + idx as f64 * line_gap;
+            let color = options.gradient.interpolate(stat.color_t);
+            format!(
+                r#"<text x="{:.2}" y="{:.2}" font-family="Geist Sans, Geist, DejaVu Sans, sans-serif" font-size="{:.2}" font-weight="600" letter-spacing="0.2" fill="{}" fill-opacity="0.78">{}</text>
+<text x="{:.2}" y="{:.2}" font-family="Geist Sans, Geist, DejaVu Sans, sans-serif" font-size="{:.2}" font-weight="700" fill="{}">{}</text>"#,
+                start_x,
+                y,
+                font_size * 0.68,
+                color,
+                stat.label,
+                start_x + label_dx,
+                y,
+                font_size,
+                color,
+                stat.value
+            )
+        })
+        .collect();
+
+    format!(r#"<g id="statsOverlay">{}</g>"#, lines)
+}
+
 fn build_route_path(coords: &[(f64, f64)], curve_tension: f32) -> String {
     if curve_tension > 0.0 {
         build_smooth_path(coords, curve_tension)
@@ -288,14 +352,9 @@ fn build_3d_endpoint_dots(top_coords: &[(f64, f64)], options: &RenderOptions) ->
     let start = top_coords[0];
     let end = top_coords[top_coords.len() - 1];
     let radius = options.stroke_width as f64 * 2.2;
-    render_endpoint_dots(
-        start,
-        end,
-        radius,
-        &options.gradient.colors[0],
-        &options.gradient.colors[1],
-        0.95,
-    )
+    let start_color = options.gradient.colors.first().copied().unwrap_or("#FFFFFF");
+    let end_color = options.gradient.colors.last().copied().unwrap_or("#FFFFFF");
+    render_endpoint_dots(start, end, radius, start_color, end_color, 0.95)
 }
 
 fn glow_filter_def(enabled: bool) -> String {
@@ -367,12 +426,27 @@ fn build_polyline_path(points: &[(f64, f64)]) -> String {
 }
 
 fn create_linear_gradient(id: &str, gradient: &Gradient) -> String {
+    let stops = &gradient.colors;
+    let stop_elements: String = stops
+        .iter()
+        .enumerate()
+        .map(|(i, color)| {
+            let offset = if stops.len() == 1 {
+                0.0
+            } else {
+                i as f64 / (stops.len() - 1) as f64 * 100.0
+            };
+            format!(
+                r#"<stop offset="{:.1}%" style="stop-color:{};stop-opacity:1" />"#,
+                offset, color
+            )
+        })
+        .collect();
     format!(
         r#"<linearGradient id="{}" x1="0%" y1="0%" x2="100%" y2="0%">
-      <stop offset="0%" style="stop-color:{};stop-opacity:1" />
-      <stop offset="100%" style="stop-color:{};stop-opacity:1" />
+      {}
     </linearGradient>"#,
-        id, gradient.colors[0], gradient.colors[1]
+        id, stop_elements
     )
 }
 

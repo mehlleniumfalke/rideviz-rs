@@ -24,8 +24,14 @@ export default function PreviewPanel({
     if (previewUrl) setImageLoaded(false);
   }, [previewUrl]);
 
-  // Show white background for transparent images since page bg is white
-  const previewBg = background === 'transparent' ? '#fff' : background === 'white' ? '#fff' : '#000';
+  const previewSurfaceStyle =
+    background === 'transparent'
+      ? {
+          backgroundColor: '#fff',
+          backgroundImage: 'repeating-conic-gradient(#e8e8e8 0% 25%, #ffffff 0% 50%)',
+          backgroundSize: '16px 16px',
+        }
+      : { background: background === 'white' ? '#fff' : '#000' };
 
   return (
     <div
@@ -64,9 +70,9 @@ export default function PreviewPanel({
           <div
             style={{
               border: 'var(--border)',
-              background: previewBg,
               maxWidth: '100%',
               maxHeight: '100%',
+              ...previewSurfaceStyle,
             }}
           >
             <img

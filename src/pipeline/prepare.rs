@@ -98,6 +98,11 @@ fn compute_route_metric_values(points: &[TrackPoint], metric: ColorByMetric) -> 
 
     match metric {
         ColorByMetric::Elevation => {
+            const SMOOTH_WINDOW: usize = 5;
+            const MAX_GRADE: f64 = 0.15;
+
+            // Compute raw per-segment grades
+            let mut raw_grades = vec![0.0_f64; points.len()];
             for i in 0..points.len().saturating_sub(1) {
                 let current = &points[i];
                 let next = &points[i + 1];
@@ -105,10 +110,18 @@ fn compute_route_metric_values(points: &[TrackPoint], metric: ColorByMetric) -> 
                     let distance_km =
                         haversine_distance(current.lat, current.lon, next.lat, next.lon);
                     if distance_km > f64::EPSILON {
-                        let grade = (next_elev - curr_elev) / (distance_km * 1000.0);
-                        values[i] = Some(grade);
+                        raw_grades[i] = (next_elev - curr_elev) / (distance_km * 1000.0);
                     }
                 }
+            }
+
+            // Smooth over a sliding window and clip to a realistic grade range
+            for i in 0..points.len() {
+                let start = i.saturating_sub(SMOOTH_WINDOW);
+                let end = (i + SMOOTH_WINDOW + 1).min(points.len());
+                let count = (end - start) as f64;
+                let avg = raw_grades[start..end].iter().sum::<f64>() / count;
+                values[i] = Some(avg.clamp(-MAX_GRADE, MAX_GRADE));
             }
         }
         ColorByMetric::Speed => {

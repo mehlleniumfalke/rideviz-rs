@@ -16,11 +16,19 @@ pub fn rasterize(svg: &str, config: &OutputConfig) -> Result<Vec<u8>, RasterErro
 
 fn load_font_db() -> usvg::fontdb::Database {
     let mut fontdb = usvg::fontdb::Database::new();
-    
-    // Load Geist font for watermark
-    let geist_bytes = include_bytes!("../../assets/fonts/Geist-Regular.otf");
-    fontdb.load_font_data(geist_bytes.to_vec());
-    
+    // Prefer explicitly known font files so text rendering is reliable in containers.
+    for path in [
+        "/app/assets/fonts/Geist-Regular.otf",
+        "./assets/fonts/Geist-Regular.otf",
+        "/app/assets/fonts/GeistPixel-Square.ttf",
+        "./assets/fonts/GeistPixel-Square.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
+        "/usr/share/fonts/dejavu/DejaVuSans.ttf",
+        "C:\\Windows\\Fonts\\arial.ttf",
+    ] {
+        let _ = fontdb.load_font_file(path);
+    }
     fontdb.load_system_fonts();
     fontdb
 }
@@ -30,8 +38,14 @@ fn rasterize_with_fontdb(
     config: &OutputConfig,
     fontdb: &usvg::fontdb::Database,
 ) -> Result<Vec<u8>, RasterError> {
+    let svg = if config.watermark {
+        inject_watermark(svg, config.width, config.height)
+    } else {
+        svg.to_string()
+    };
+
     let options = usvg::Options::default();
-    let tree = usvg::Tree::from_str(svg, &options, fontdb)
+    let tree = usvg::Tree::from_str(&svg, &options, fontdb)
         .map_err(|e| RasterError::RenderFailed(format!("Failed to parse SVG: {}", e)))?;
 
     let mut pixmap = tiny_skia::Pixmap::new(config.width, config.height)
@@ -48,64 +62,24 @@ fn rasterize_with_fontdb(
 
     resvg::render(&tree, transform, &mut pixmap.as_mut());
 
-    // Apply watermark if enabled
-    if config.watermark {
-        apply_watermark(&mut pixmap, fontdb)?;
-    }
-
     pixmap
         .encode_png()
         .map_err(|e| RasterError::RenderFailed(format!("Failed to encode PNG: {}", e)))
 }
 
-fn apply_watermark(
-    pixmap: &mut tiny_skia::Pixmap,
-    fontdb: &usvg::fontdb::Database,
-) -> Result<(), RasterError> {
-    let watermark_text = "rideviz.online";
-    let height = pixmap.height() as f32;
-    let width = pixmap.width() as f32;
-    
-    // Font size: 3% of image height
-    let font_size = (height * 0.03).max(12.0);
-    
-    // Padding from edges
-    let padding = 20.0;
-    
-    // Build SVG with text element
-    let svg_text = format!(
-        r#"<svg xmlns="http://www.w3.org/2000/svg" width="{}" height="{}">
-            <defs>
-                <filter id="shadow" x="-50%" y="-50%" width="200%" height="200%">
-                    <feGaussianBlur in="SourceAlpha" stdDeviation="2"/>
-                    <feOffset dx="0" dy="1" result="offsetblur"/>
-                    <feComponentTransfer>
-                        <feFuncA type="linear" slope="0.3"/>
-                    </feComponentTransfer>
-                    <feMerge>
-                        <feMergeNode/>
-                        <feMergeNode in="SourceGraphic"/>
-                    </feMerge>
-                </filter>
-            </defs>
-            <text x="{}" y="{}" font-family="Geist, sans-serif" font-size="{}" 
-                  fill="rgba(255, 255, 255, 0.7)" text-anchor="end" filter="url(#shadow)">{}</text>
-        </svg>"#,
-        width,
-        height,
-        width - padding,
-        height - padding,
-        font_size,
-        watermark_text
+fn inject_watermark(
+    svg: &str,
+    width: u32,
+    height: u32,
+) -> String {
+    let font_size = ((height as f32 * 0.020) as u32).max(13);
+    let padding = 16u32;
+    let text_x = width / 2;
+    let text_y = height.saturating_sub(padding);
+
+    let nodes = format!(
+        "<text x=\"{text_x}\" y=\"{text_y}\" font-family=\"Geist Pixel, DejaVu Sans Mono, DejaVu Sans, sans-serif\" font-size=\"{font_size}\" fill=\"rgb(0,0,0)\" text-anchor=\"middle\">created with rideviz.online</text>"
     );
 
-    // Parse and render the watermark SVG
-    let options = usvg::Options::default();
-    let watermark_tree = usvg::Tree::from_str(&svg_text, &options, fontdb)
-        .map_err(|e| RasterError::RenderFailed(format!("Failed to parse watermark SVG: {}", e)))?;
-
-    let transform = tiny_skia::Transform::identity();
-    resvg::render(&watermark_tree, transform, &mut pixmap.as_mut());
-
-    Ok(())
+    svg.replacen("</svg>", &format!("{nodes}</svg>"), 1)
 }

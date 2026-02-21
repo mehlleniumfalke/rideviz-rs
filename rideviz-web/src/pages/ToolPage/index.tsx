@@ -1,6 +1,14 @@
 import { useState, useEffect, useRef } from 'react';
 import { uploadFile, getVisualization } from '../../api/client';
-import type { AvailableData, ColorByMetric, GradientName, BackgroundColor } from '../../types/api';
+import type {
+  AvailableData,
+  ColorByMetric,
+  GradientName,
+  BackgroundColor,
+  ExportPreset,
+  Metrics,
+  StatKey,
+} from '../../types/api';
 
 import UploadZone from './UploadZone';
 import GradientPicker from './GradientPicker';
@@ -9,6 +17,8 @@ import PreviewPanel from './PreviewPanel';
 import ColorByPicker from './ColorByPicker';
 import BackgroundPicker from './BackgroundPicker';
 import DurationControl from './DurationControl';
+import ExportFormatPicker, { getExportFormat } from './ExportFormatPicker';
+import StatsPicker, { isStatAvailable } from './StatsPicker';
 
 interface ToolPageProps {
   onNavigateHome: () => void;
@@ -16,6 +26,7 @@ interface ToolPageProps {
 
 interface VizConfig {
   gradient: GradientName;
+  exportPreset: ExportPreset;
   colorBy: ColorByMetric | null;
   strokeWidth: number;
   padding: number;
@@ -25,6 +36,7 @@ interface VizConfig {
   animated: boolean;
   duration: number;
   fps: number;
+  stats: StatKey[];
 }
 
 
@@ -45,11 +57,13 @@ function getStoredFps(): number {
 export default function ToolPage({ onNavigateHome }: ToolPageProps) {
   const [fileId, setFileId] = useState<string | null>(null);
   const [availableData, setAvailableData] = useState<AvailableData | null>(null);
+  const [metrics, setMetrics] = useState<Metrics | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
 
   const [config, setConfig] = useState<VizConfig>({
     gradient: 'black',
+    exportPreset: 'hd_landscape_16x9',
     colorBy: 'heartrate',
     strokeWidth: 3,
     padding: 40,
@@ -59,6 +73,7 @@ export default function ToolPage({ onNavigateHome }: ToolPageProps) {
     animated: false,
     duration: getStoredDuration(),
     fps: getStoredFps(),
+    stats: [],
   });
 
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -75,14 +90,23 @@ export default function ToolPage({ onNavigateHome }: ToolPageProps) {
       const response = await uploadFile(file);
       setFileId(response.file_id);
       const inferredAvailableData: AvailableData = response.available_data;
+      const inferredMetrics: Metrics = response.metrics;
       setAvailableData(inferredAvailableData);
+      setMetrics(inferredMetrics);
       
       // Only update colorBy if heartrate is not available and we had heartrate selected
       setConfig((prev) => {
+        const filteredStats = prev.stats.filter((stat) =>
+          isStatAvailable(stat, inferredAvailableData, inferredMetrics),
+        );
         if (prev.colorBy === 'heartrate' && !inferredAvailableData.has_heart_rate) {
-          return { ...prev, colorBy: inferredAvailableData.has_elevation ? 'elevation' : 'speed' };
+          return {
+            ...prev,
+            colorBy: inferredAvailableData.has_elevation ? 'elevation' : 'speed',
+            stats: filteredStats,
+          };
         }
-        return prev;
+        return { ...prev, stats: filteredStats };
       });
       
       if (!inferredAvailableData.has_elevation) {
@@ -114,15 +138,19 @@ export default function ToolPage({ onNavigateHome }: ToolPageProps) {
       abortControllerRef.current = controller;
 
       try {
+        const selectedFormat = getExportFormat(config.exportPreset);
         const requestParams: any = {
           file_id: fileId,
           gradient: config.gradient,
+          width: selectedFormat.width,
+          height: selectedFormat.height,
           stroke_width: config.strokeWidth,
           padding: config.padding,
           smoothing: config.smoothing,
           color_by: config.colorBy ?? undefined,
           glow: config.glow,
           background: config.background,
+          stats: config.stats.length > 0 ? config.stats : undefined,
         };
 
         if (config.animated) {
@@ -160,15 +188,19 @@ export default function ToolPage({ onNavigateHome }: ToolPageProps) {
     if (!fileId) return;
 
     try {
+      const selectedFormat = getExportFormat(config.exportPreset);
       const requestParams: any = {
         file_id: fileId,
         gradient: config.gradient,
+        width: selectedFormat.width,
+        height: selectedFormat.height,
         stroke_width: config.strokeWidth,
         padding: config.padding,
         smoothing: config.smoothing,
         color_by: config.colorBy ?? undefined,
         glow: config.glow,
         background: config.background,
+        stats: config.stats.length > 0 ? config.stats : undefined,
       };
 
       if (config.animated) {
@@ -200,6 +232,7 @@ export default function ToolPage({ onNavigateHome }: ToolPageProps) {
     }
     setFileId(null);
     setAvailableData(null);
+    setMetrics(null);
     setUploadError(null);
     setPreviewError(null);
     setPreviewUrl((prev) => {
@@ -282,10 +315,26 @@ export default function ToolPage({ onNavigateHome }: ToolPageProps) {
                 onChange={(background) => setConfig({ ...config, background })}
               />
 
+              {availableData && metrics && (
+                <StatsPicker
+                  value={config.stats}
+                  availableData={availableData}
+                  metrics={metrics}
+                  onChange={(stats) => setConfig({ ...config, stats })}
+                />
+              )}
+
+              <ExportFormatPicker
+                value={config.exportPreset}
+                onChange={(exportPreset) => setConfig({ ...config, exportPreset })}
+              />
+
               {config.animated && (
                 <DurationControl
                   duration={config.duration}
                   fps={config.fps}
+                  width={getExportFormat(config.exportPreset).width}
+                  height={getExportFormat(config.exportPreset).height}
                   onChange={(updates) => setConfig({ ...config, ...updates })}
                 />
               )}

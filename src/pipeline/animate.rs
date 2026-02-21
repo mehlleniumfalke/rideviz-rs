@@ -5,12 +5,13 @@ use rayon::prelude::*;
 
 use crate::error::RasterError;
 use crate::pipeline::{rasterize, render};
-use crate::types::viz::{AnimationEasing, OutputConfig, RenderOptions, VizData};
+use crate::types::viz::{AnimationEasing, OutputConfig, RenderOptions, StatOverlayItem, VizData};
 
 pub fn render_apng(
     data: &VizData,
     options: &RenderOptions,
     output: &OutputConfig,
+    stats: &[StatOverlayItem],
 ) -> Result<Vec<u8>, RasterError> {
     let frame_count = options.animation_frames.max(8);
     let frames: Vec<PNGImage> = (0..frame_count)
@@ -23,7 +24,7 @@ pub fn render_apng(
             };
             let progress = eased_progress(linear_progress, options.animation_easing);
 
-            let svg = render::render_svg_frame(data, options, progress).map_err(|err| {
+            let svg = render::render_svg_frame(data, options, progress, stats).map_err(|err| {
                 RasterError::AnimationFailed(format!(
                     "Failed to render animation frame {}: {}",
                     idx, err

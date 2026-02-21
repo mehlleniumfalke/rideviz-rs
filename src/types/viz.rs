@@ -40,6 +40,13 @@ pub struct VizData {
 }
 
 #[derive(Debug, Clone)]
+pub struct StatOverlayItem {
+    pub label: String,
+    pub value: String,
+    pub color_t: f64,
+}
+
+#[derive(Debug, Clone)]
 pub struct RoutePoint {
     pub x: f64,
     pub y: f64,
