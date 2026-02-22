@@ -1,29 +1,41 @@
-import { useState, useEffect } from 'react';
+import type { RefObject } from 'react';
 import type { BackgroundColor } from '../../types/api';
 
 interface PreviewPanelProps {
-  previewUrl: string | null;
+  canvasRef: RefObject<HTMLCanvasElement | null>;
+  previewWidth: number;
+  previewHeight: number;
   isLoading: boolean;
   error: string | null;
+  isExporting: boolean;
   onDownload: () => void;
+  onShare: () => void;
   fileId: string | null;
   background: BackgroundColor;
+  canShare: boolean;
+  isAnimated: boolean;
+  canAnimatedExport: boolean;
+  shareStatus: string | null;
 }
 
 export default function PreviewPanel({
-  previewUrl,
+  canvasRef,
+  previewWidth,
+  previewHeight,
   isLoading,
   error,
+  isExporting,
   onDownload,
+  onShare,
   fileId,
   background,
+  canShare,
+  isAnimated,
+  canAnimatedExport,
+  shareStatus,
 }: PreviewPanelProps) {
-  const [imageLoaded, setImageLoaded] = useState(false);
-
-  useEffect(() => {
-    if (previewUrl) setImageLoaded(false);
-  }, [previewUrl]);
-
+  const previewRatio = previewWidth / previewHeight;
+  const previewAspectRatio = `${previewWidth} / ${previewHeight}`;
   const previewSurfaceStyle =
     background === 'transparent'
       ? {
@@ -60,43 +72,53 @@ export default function PreviewPanel({
             <div>Upload a file to preview</div>
           </div>
         ) : isLoading ? (
-          <div style={{ color: 'var(--gray)' }}>Loading...</div>
+          <div style={{ color: 'var(--gray)' }} aria-live="polite">
+            Loading...
+          </div>
         ) : error ? (
-          <div style={{ textAlign: 'center', color: '#c00' }}>
+          <div style={{ textAlign: 'center', color: '#c00' }} aria-live="polite">
             <div style={{ marginBottom: 'var(--space-2)' }}>⚠</div>
             <div style={{ fontSize: 'var(--text-sm)' }}>{error}</div>
           </div>
-        ) : previewUrl ? (
+        ) : (
           <div
             style={{
               border: 'var(--border)',
-              maxWidth: '100%',
-              maxHeight: '100%',
+              width: `min(960px, 100%, calc(60vh * ${previewRatio}))`,
+              aspectRatio: previewAspectRatio,
               ...previewSurfaceStyle,
             }}
           >
-            <img
-              src={previewUrl}
-              alt="Route animation preview"
-              onLoad={() => setImageLoaded(true)}
+            <canvas
+              ref={canvasRef}
+              aria-label="Route animation preview canvas"
               style={{
                 display: 'block',
-                maxWidth: '100%',
-                maxHeight: '60vh',
-                opacity: imageLoaded ? 1 : 0,
-                transition: 'opacity 200ms',
+                width: '100%',
+                height: '100%',
               }}
             />
           </div>
-        ) : null}
+        )}
       </div>
 
-      {/* Download button */}
-      {previewUrl && !isLoading && !error && (
+      {/* Action buttons */}
+      {fileId && !isLoading && !error && (
         <div style={{ padding: 'var(--space-4)', borderTop: 'var(--border)' }}>
-          <button onClick={onDownload} style={{ width: '100%', padding: 'var(--space-3)' }}>
-            Download Animation ↓
-          </button>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-2)' }}>
+            <button
+              onClick={onDownload}
+              aria-label="Download generated export"
+              disabled={isExporting || (isAnimated && !canAnimatedExport)}
+              style={{ width: '100%', padding: 'var(--space-3)' }}
+            >
+              {isExporting ? 'Preparing...' : isAnimated ? (canAnimatedExport ? 'Export MP4 ↓' : 'Upgrade for MP4') : 'Download PNG ↓'}
+            </button>
+            <button onClick={onShare} aria-label="Share generated export" disabled={isExporting} style={{ width: '100%', padding: 'var(--space-3)' }}>
+              {canShare ? 'Share ↗' : 'Share Link ↗'}
+            </button>
+          </div>
+          {shareStatus && <div style={{ marginTop: 'var(--space-2)', fontSize: 'var(--text-xs)', color: 'var(--gray)' }} aria-live="polite">{shareStatus}</div>}
         </div>
       )}
     </div>

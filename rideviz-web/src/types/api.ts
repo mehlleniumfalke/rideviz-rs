@@ -1,6 +1,6 @@
 export interface UploadResponse {
   file_id: string;
-  file_type: 'gpx' | 'fit';
+  file_type: 'gpx' | 'fit' | 'strava';
   metrics: Metrics;
   available_data: AvailableData;
 }
@@ -33,7 +33,7 @@ export type ExportPreset =
   | 'hd_landscape_16x9';
 export type ColorByMetric = 'elevation' | 'speed' | 'heartrate' | 'power';
 export type BackgroundColor = 'transparent' | 'white' | 'black';
-export type OutputFormat = 'apng';
+export type OutputFormat = 'png';
 export type StatKey =
   | 'distance'
   | 'duration'
@@ -71,4 +71,73 @@ export interface VisualizeRequest {
   watermark?: boolean;
   format?: OutputFormat;
   stats?: StatKey[];
+}
+
+export interface VideoExportRequest {
+  file_id: string;
+  gradient: GradientName;
+  width?: number;
+  height?: number;
+  stroke_width?: number;
+  padding?: number;
+  smoothing?: number;
+  color_by?: ColorByMetric;
+  glow?: boolean;
+  background?: Exclude<BackgroundColor, 'transparent'>;
+  duration_seconds: number;
+  fps: number;
+  stats?: StatKey[];
+}
+
+export interface RoutePoint {
+  x: number;
+  y: number;
+  value: number | null;
+  elevation: number | null;
+}
+
+export interface VizData {
+  points: RoutePoint[];
+}
+
+export interface RouteDataResponse {
+  file_id: string;
+  viz_data: VizData;
+  metrics: Metrics;
+  available_data: AvailableData;
+}
+
+export interface StravaAuthResponse {
+  auth_url: string;
+  state: string;
+}
+
+export interface StravaCallbackResponse {
+  access_token: string;
+  athlete_id: number | null;
+  expires_in_seconds: number;
+}
+
+export interface StravaActivitySummary {
+  id: number;
+  name: string;
+  distance_m: number;
+  start_date: string | null;
+}
+
+export interface CheckoutResponse {
+  checkout_url: string;
+  mode: 'live' | 'mock';
+}
+
+export interface LicenseResponse {
+  token: string;
+  pro: boolean;
+  expires_in_seconds: number;
+}
+
+export interface LicenseVerifyResponse {
+  valid: boolean;
+  pro: boolean;
+  email: string;
 }

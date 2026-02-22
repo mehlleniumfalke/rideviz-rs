@@ -1,12 +1,8 @@
 interface AdvancedPanelProps {
-  strokeWidth: number;
-  padding: number;
   smoothing: number;
   glow: boolean;
   animated: boolean;
   onChange: (config: {
-    strokeWidth?: number;
-    padding?: number;
     smoothing?: number;
     glow?: boolean;
     animated?: boolean;
@@ -14,10 +10,9 @@ interface AdvancedPanelProps {
 }
 
 export default function AdvancedPanel({
-  strokeWidth,
-  padding,
   smoothing,
   glow,
+  animated,
   onChange,
 }: AdvancedPanelProps) {
   return (
@@ -25,36 +20,6 @@ export default function AdvancedPanel({
       <div className="label">Controls</div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
-        {/* Stroke Width */}
-        <div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 'var(--space-1)' }}>
-            <span style={{ fontSize: 'var(--text-xs)' }}>Stroke Width</span>
-            <span style={{ fontSize: 'var(--text-xs)', color: 'var(--gray)' }}>{strokeWidth}</span>
-          </div>
-          <input
-            type="range"
-            min={1}
-            max={12}
-            value={strokeWidth}
-            onChange={(e) => onChange({ strokeWidth: Number(e.target.value) })}
-          />
-        </div>
-
-        {/* Padding */}
-        <div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 'var(--space-1)' }}>
-            <span style={{ fontSize: 'var(--text-xs)' }}>Padding</span>
-            <span style={{ fontSize: 'var(--text-xs)', color: 'var(--gray)' }}>{padding}</span>
-          </div>
-          <input
-            type="range"
-            min={0}
-            max={120}
-            value={padding}
-            onChange={(e) => onChange({ padding: Number(e.target.value) })}
-          />
-        </div>
-
         {/* Smoothing */}
         <div>
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 'var(--space-1)' }}>
@@ -78,6 +43,15 @@ export default function AdvancedPanel({
             onChange={(e) => onChange({ glow: e.target.checked })}
           />
           <span style={{ fontSize: 'var(--text-xs)' }}>Enable glow effect</span>
+        </label>
+
+        <label style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', cursor: 'pointer' }}>
+          <input
+            type="checkbox"
+            checked={animated}
+            onChange={(e) => onChange({ animated: e.target.checked })}
+          />
+          <span style={{ fontSize: 'var(--text-xs)' }}>Animated export</span>
         </label>
 
       </div>

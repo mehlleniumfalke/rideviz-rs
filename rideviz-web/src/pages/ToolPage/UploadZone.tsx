@@ -9,6 +9,7 @@ interface UploadZoneProps {
 export default function UploadZone({ onFileSelect, isUploading, error }: UploadZoneProps) {
   const [dragActive, setDragActive] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const zoneId = 'file-upload-zone';
 
   const handleDrag = (e: React.DragEvent) => {
     e.preventDefault();
@@ -38,6 +39,13 @@ export default function UploadZone({ onFileSelect, isUploading, error }: UploadZ
     }
   };
 
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      inputRef.current?.click();
+    }
+  };
+
   return (
     <div
       onDragEnter={handleDrag}
@@ -45,6 +53,11 @@ export default function UploadZone({ onFileSelect, isUploading, error }: UploadZ
       onDragOver={handleDrag}
       onDrop={handleDrop}
       onClick={() => inputRef.current?.click()}
+      onKeyDown={handleKeyDown}
+      role="button"
+      tabIndex={0}
+      aria-label="Upload GPX or FIT file"
+      aria-describedby={zoneId}
       style={{
         border: dragActive ? '2px solid var(--black)' : '1px dashed var(--black)',
         padding: 'var(--space-8)',
@@ -55,6 +68,7 @@ export default function UploadZone({ onFileSelect, isUploading, error }: UploadZ
     >
       <input
         ref={inputRef}
+        id="file-upload-input"
         type="file"
         accept=".gpx,.fit"
         onChange={handleChange}
@@ -68,7 +82,7 @@ export default function UploadZone({ onFileSelect, isUploading, error }: UploadZ
           <div style={{ fontSize: 'var(--text-lg)', marginBottom: 'var(--space-2)' }}>
             Drop GPX or FIT file
           </div>
-          <div style={{ fontSize: 'var(--text-sm)', color: 'var(--gray)' }}>
+          <div id={zoneId} style={{ fontSize: 'var(--text-sm)', color: 'var(--gray)' }}>
             or click to browse
           </div>
         </>

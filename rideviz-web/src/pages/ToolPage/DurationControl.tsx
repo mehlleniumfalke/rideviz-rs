@@ -6,17 +6,6 @@ interface DurationControlProps {
   onChange: (config: { duration?: number; fps?: number }) => void;
 }
 
-type Preset = {
-  label: string;
-  duration: number;
-};
-
-const presets: Preset[] = [
-  { label: 'Story', duration: 6 },
-  { label: 'Reel', duration: 15 },
-  { label: 'YouTube', duration: 30 },
-];
-
 const snapPoints = [6, 9, 15, 30];
 
 function estimateFileSizeKB(duration: number, fps: number, width = 1920, height = 1080): number {
@@ -68,36 +57,6 @@ export default function DurationControl({
       <div className="label">Duration & Speed</div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
-        {/* Platform Presets */}
-        <div>
-          <div style={{ fontSize: 'var(--text-xs)', marginBottom: 'var(--space-2)', color: 'var(--gray)' }}>
-            Platform presets
-          </div>
-          <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
-            {presets.map((preset) => (
-              <button
-                key={preset.label}
-                onClick={() => onChange({ duration: preset.duration })}
-                style={{
-                  flex: 1,
-                  padding: 'var(--space-2)',
-                  fontSize: 'var(--text-xs)',
-                  border: 'var(--border)',
-                  borderRadius: 'var(--radius)',
-                  background: duration === preset.duration ? 'var(--bg-active)' : 'transparent',
-                  cursor: 'pointer',
-                  transition: 'all 0.15s',
-                }}
-              >
-                {preset.label}
-                <div style={{ fontSize: '10px', opacity: 0.6, marginTop: '2px' }}>
-                  {preset.duration}s
-                </div>
-              </button>
-            ))}
-          </div>
-        </div>
-
         {/* Duration Slider */}
         <div>
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 'var(--space-1)' }}>

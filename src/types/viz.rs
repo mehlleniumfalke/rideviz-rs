@@ -34,7 +34,7 @@ pub enum OutputFormat {
     Apng,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VizData {
     pub points: Vec<RoutePoint>,
 }
@@ -46,7 +46,7 @@ pub struct StatOverlayItem {
     pub color_t: f64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RoutePoint {
     pub x: f64,
     pub y: f64,

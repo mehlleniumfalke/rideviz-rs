@@ -10,7 +10,7 @@ COPY rideviz-web/ ./
 RUN npm run build
 
 # Build stage
-FROM rust:1.85-slim as builder
+FROM rust:1.88-slim as builder
 
 WORKDIR /build
 
@@ -44,6 +44,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y \
     ca-certificates \
     curl \
+    ffmpeg \
     fonts-dejavu-core \
     && mkdir -p /app/assets/fonts \
     && curl -fsSL "https://raw.githubusercontent.com/vercel/geist-font/main/fonts/Geist/otf/Geist-Regular.otf" -o /app/assets/fonts/Geist-Regular.otf \

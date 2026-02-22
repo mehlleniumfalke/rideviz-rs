@@ -1,11 +1,5 @@
-mod config;
-mod error;
-mod pipeline;
-mod routes;
-mod state;
-mod types;
-
 use axum::Router;
+use rideviz_rs::{config, routes, state};
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::services::{ServeDir, ServeFile};
 use tower_http::trace::TraceLayer;
@@ -23,7 +17,7 @@ async fn main() {
         .init();
 
     let config = config::Config::from_env();
-    let state = state::AppState::new();
+    let state = state::AppState::new(config.clone());
 
     // Start cache eviction task
     let eviction_state = state.clone();
@@ -43,6 +37,8 @@ async fn main() {
         .merge(routes::health::router())
         .merge(routes::upload::router())
         .merge(routes::visualize::router())
+        .merge(routes::strava::router())
+        .merge(routes::payment::router())
         .fallback_service(serve_dir)
         .layer(
             CorsLayer::new()

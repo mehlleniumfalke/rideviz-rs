@@ -1,4 +1,4 @@
-import type { ColorByMetric } from '../../types/api';
+import type { ColorByMetric, GradientName } from '../../types/api';
 
 interface AvailableColorByData {
   has_elevation: boolean;
@@ -8,6 +8,7 @@ interface AvailableColorByData {
 
 interface ColorByPickerProps {
   value: ColorByMetric | null;
+  gradient: GradientName;
   availableData: AvailableColorByData;
   onChange: (value: ColorByMetric | null) => void;
 }
@@ -18,13 +19,14 @@ type ColorByOption = {
   disabled: boolean;
 };
 
-export default function ColorByPicker({ value, availableData, onChange }: ColorByPickerProps) {
+export default function ColorByPicker({ value, gradient, availableData, onChange }: ColorByPickerProps) {
+  const disableMetricColoring = gradient === 'black';
   const options: ColorByOption[] = [
     { value: null, label: 'Gradient', disabled: false },
-    { value: 'elevation', label: 'Elevation', disabled: !availableData.has_elevation },
-    { value: 'speed', label: 'Speed', disabled: false },
-    { value: 'heartrate', label: 'Heart Rate', disabled: !availableData.has_heart_rate },
-    { value: 'power', label: 'Power', disabled: !availableData.has_power },
+    { value: 'elevation', label: 'Elevation', disabled: disableMetricColoring || !availableData.has_elevation },
+    { value: 'speed', label: 'Speed', disabled: disableMetricColoring },
+    { value: 'heartrate', label: 'Heart Rate', disabled: disableMetricColoring || !availableData.has_heart_rate },
+    { value: 'power', label: 'Power', disabled: disableMetricColoring || !availableData.has_power },
   ];
 
   return (

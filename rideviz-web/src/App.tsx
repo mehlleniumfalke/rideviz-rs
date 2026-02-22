@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import posthog from 'posthog-js';
-import ToolPage from './pages/ToolPage';
+import ToolPage from './pages/ToolPage/ToolPageImpl';
 
 type RoutePath = '/' | '/app';
 

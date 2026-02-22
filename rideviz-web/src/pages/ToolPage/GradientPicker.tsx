@@ -25,6 +25,8 @@ export default function GradientPicker({ selectedGradient, onChange }: GradientP
           <button
             key={g.name}
             onClick={() => onChange(g.name)}
+            aria-label={`Select ${g.name} gradient`}
+            aria-pressed={selectedGradient === g.name}
             style={{
               width: '100%',
               aspectRatio: '1',

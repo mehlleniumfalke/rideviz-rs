@@ -23,6 +23,9 @@
   --black: #000000;
   --gray: #666666;
   --gray-light: #999999;
+  --bg-active: #f0f0f0;
+  --bg-secondary: #f6f6f6;
+  --radius: 4px;
   --border: 1px solid #000;
   
   --space-1: 4px;
@@ -86,6 +89,15 @@ button {
 button:hover {
   background: var(--black);
   color: var(--white);
+}
+
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+a:focus-visible,
+[role='button']:focus-visible {
+  outline: 2px solid var(--black);
+  outline-offset: 2px;
 }
 
 button:disabled {
