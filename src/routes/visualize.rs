@@ -716,6 +716,10 @@ fn render_mp4_video(
     })?;
 
     let result = (|| -> Result<Vec<u8>, AppError> {
+        let precomputed = render::precompute_route_3d(data, options)
+            .map_err(|e| AppError::Internal(format!("Failed to precompute route geometry: {}", e)))?;
+
+        let t_frames_start = std::time::Instant::now();
         for idx in 0..options.animation_frames {
             let linear_progress = if options.animation_frames <= 1 {
                 1.0
@@ -724,7 +728,8 @@ fn render_mp4_video(
             };
             let progress = animate::map_linear_progress_to_route(data, linear_progress);
             let frame_stats = build_stats_overlay_items_at_progress(stats, data, metrics, progress);
-            let svg = render::render_svg_frame(data, options, progress, &frame_stats)?;
+            let svg = render::render_svg_frame_precomputed(&precomputed, options, progress, &frame_stats)
+                .map_err(|e| AppError::Internal(format!("Failed to render frame {}: {}", idx, e)))?;
             let png_bytes = rasterize::rasterize(&svg, output)?;
             let frame_path = frame_file_path(&work_dir, idx);
             fs::write(&frame_path, png_bytes).map_err(|err| {
@@ -736,10 +741,18 @@ fn render_mp4_video(
                 ))
             })?;
         }
+        tracing::info!(
+            "Rendered {} frames in {:.2}s ({:.0}ms/frame)",
+            options.animation_frames,
+            t_frames_start.elapsed().as_secs_f64(),
+            t_frames_start.elapsed().as_millis() as f64 / options.animation_frames.max(1) as f64
+        );
 
         let frame_pattern = work_dir.join("frame_%05d.png");
         let output_path = work_dir.join("rideviz-route.mp4");
+        let t_ffmpeg = std::time::Instant::now();
         encode_frames_to_mp4(&frame_pattern, &output_path, fps)?;
+        tracing::info!("ffmpeg encode took {:.2}s", t_ffmpeg.elapsed().as_secs_f64());
 
         fs::read(&output_path).map_err(|err| {
             AppError::Internal(format!(

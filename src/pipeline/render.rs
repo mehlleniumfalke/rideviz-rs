@@ -22,6 +22,152 @@ struct ProjectedPoint {
     route_progress: f64,
 }
 
+/// Geometry that is identical for every frame and can be precomputed once.
+pub struct PrecomputedRoute3D {
+    /// Full route projected, fitted, and subdivided — ready to reveal per-frame.
+    smoothed: Vec<ProjectedPoint>,
+    /// Painter's-algorithm sort order (indices into `smoothed` segments, back-to-front).
+    sorted_wall_order: Vec<usize>,
+}
+
+/// Precompute the frame-invariant geometry for video rendering.
+/// Call this once before the frame loop and pass the result to
+/// `render_svg_frame_precomputed` for each frame.
+pub fn precompute_route_3d(
+    data: &VizData,
+    options: &RenderOptions,
+) -> Result<PrecomputedRoute3D, RenderError> {
+    let padding = options.padding as f64;
+    let view_width = options.width as f64 - 2.0 * padding;
+    let view_height = options.height as f64 - 2.0 * padding;
+    if view_width <= 0.0 || view_height <= 0.0 {
+        return Err(RenderError::SvgError("Invalid viewport size".to_string()));
+    }
+
+    let filtered = filter_route_points(&data.points, options.simplify)?;
+    let (min_elev, max_elev) = route_elevation_bounds(&filtered)?;
+    let elev_range = (max_elev - min_elev).max(f64::EPSILON);
+    let elevation_scale = ((max_elev - min_elev) / ELEVATION_RANGE_DIVISOR)
+        .clamp(ELEVATION_SCALE_MIN, ELEVATION_SCALE_MAX);
+    let projection_width = (LEGACY_WIDE_WIDTH - 2.0 * padding).max(1.0);
+    let projection_height = (LEGACY_WIDE_HEIGHT - 2.0 * padding).max(1.0);
+    let extrusion_height = projection_height * EXTRUSION_RATIO * elevation_scale;
+
+    let projected = project_to_isometric(
+        &filtered,
+        projection_width,
+        projection_height,
+        min_elev,
+        elev_range,
+        extrusion_height,
+    );
+    let fitted = fit_to_viewport(&projected, padding, view_width, view_height)?;
+    let smoothed = subdivide_projected_catmull(&fitted, options.curve_tension, WALL_SUBDIVISIONS);
+
+    let n = smoothed.len().saturating_sub(1);
+    let mut sorted_wall_order: Vec<usize> = (0..n).collect();
+    sorted_wall_order.sort_unstable_by(|&a, &b| {
+        let ya = (smoothed[a].ground.1 + smoothed[a + 1].ground.1) * 0.5;
+        let yb = (smoothed[b].ground.1 + smoothed[b + 1].ground.1) * 0.5;
+        ya.total_cmp(&yb)
+    });
+
+    Ok(PrecomputedRoute3D { smoothed, sorted_wall_order })
+}
+
+/// Render a single animation frame using precomputed geometry.
+pub fn render_svg_frame_precomputed(
+    precomputed: &PrecomputedRoute3D,
+    options: &RenderOptions,
+    progress: f64,
+    stats: &[StatOverlayItem],
+) -> Result<String, RenderError> {
+    let width = options.width as f64;
+    let height = options.height as f64;
+
+    let revealed = reveal_projected_points(&precomputed.smoothed, progress.clamp(0.0, 1.0));
+    let walls = build_wall_polygons_precomputed(&revealed, &precomputed.sorted_wall_order, &options.gradient);
+    let (ground_coords, top_coords, top_values) = split_projected_points(&revealed);
+
+    let top_path = if options.color_by.is_some() {
+        build_segment_paths(&top_coords, Some(&top_values), options.stroke_width, &options.gradient)
+    } else {
+        format!(
+            r#"<path d="{}" fill="none" stroke="url(#routeGradient)" stroke-width="{:.1}" stroke-linecap="round" stroke-linejoin="round"/>"#,
+            build_route_path(&top_coords, options.curve_tension),
+            options.stroke_width
+        )
+    };
+    let ground_path = format!(
+        r##"<path d="{}" fill="none" stroke="#FFFFFF" stroke-opacity="0.14" stroke-width="{:.1}" stroke-linecap="round" stroke-linejoin="round"/>"##,
+        build_route_path(&ground_coords, options.curve_tension),
+        (options.stroke_width * 0.9).max(1.0)
+    );
+    let outline_path = format!(
+        r##"<path d="{}" fill="none" stroke="#FFFFFF" stroke-opacity="0.55" stroke-width="{:.1}" stroke-linecap="round" stroke-linejoin="round"/>"##,
+        build_route_path(&top_coords, options.curve_tension),
+        options.stroke_width * 1.5
+    );
+
+    let has_extent = revealed.len() >= 2 && {
+        let first = revealed.first().unwrap().top;
+        revealed.iter().any(|p| {
+            let dx = p.top.0 - first.0;
+            let dy = p.top.1 - first.1;
+            dx * dx + dy * dy > 1.0
+        })
+    };
+
+    let glow_filter = glow_filter_def(options.glow && has_extent);
+    let glow_path = if options.glow && has_extent {
+        if options.color_by.is_some() {
+            let glow_segments = build_segment_paths(
+                &top_coords,
+                Some(&top_values),
+                options.stroke_width * 2.4,
+                &options.gradient,
+            );
+            format!(r#"<g filter="url(#glow)" opacity="0.6">{}</g>"#, glow_segments)
+        } else {
+            format!(
+                r#"<path d="{}" fill="none" stroke="url(#routeGradient)" stroke-width="{:.1}" stroke-linecap="round" stroke-linejoin="round" filter="url(#glow)" opacity="0.6"/>"#,
+                build_route_path(&top_coords, options.curve_tension),
+                options.stroke_width * 2.4
+            )
+        }
+    } else {
+        String::new()
+    };
+    let endpoint_dots = build_3d_endpoint_dots(&top_coords, options);
+    let stats_overlay = build_stats_overlay(stats, options);
+
+    Ok(format!(
+        r#"<svg xmlns="http://www.w3.org/2000/svg" width="{}" height="{}" viewBox="0 0 {} {}">
+  <defs>
+    {}
+    {}
+  </defs>
+  {}
+  {}
+  {}
+  {}
+  {}
+  {}
+  {}
+</svg>"#,
+        width, height, width, height,
+        create_linear_gradient("routeGradient", &options.gradient),
+        glow_filter,
+        walls,
+        ground_path,
+        outline_path,
+        glow_path,
+        top_path,
+        endpoint_dots,
+        stats_overlay
+    ))
+}
+
 pub fn render_svg_frame(
     data: &VizData,
     options: &RenderOptions,
@@ -264,6 +410,41 @@ fn fit_to_viewport(
             route_progress: point.route_progress,
         })
         .collect())
+}
+
+fn build_wall_polygons_precomputed(
+    points: &[ProjectedPoint],
+    sorted_wall_order: &[usize],
+    gradient: &Gradient,
+) -> String {
+    let wall_count = points.len().saturating_sub(1);
+    if wall_count == 0 {
+        return String::new();
+    }
+    let mut out = String::with_capacity(wall_count * 145);
+    for &i in sorted_wall_order {
+        if i >= wall_count {
+            continue;
+        }
+        let current = points[i];
+        let next = points[i + 1];
+        let t = current
+            .value
+            .unwrap_or_else(|| i as f64 / wall_count.max(1) as f64);
+        let color = gradient.interpolate(remap_color_contrast(t));
+        use std::fmt::Write as _;
+        let _ = write!(
+            out,
+            r#"<polygon points="{:.2},{:.2} {:.2},{:.2} {:.2},{:.2} {:.2},{:.2}" fill="{}" fill-opacity="{:.2}"/>"#,
+            current.ground.0, current.ground.1,
+            current.top.0, current.top.1,
+            next.top.0, next.top.1,
+            next.ground.0, next.ground.1,
+            color,
+            WALL_FILL_OPACITY
+        );
+    }
+    out
 }
 
 fn build_wall_polygons(points: &[ProjectedPoint], gradient: &Gradient) -> String {
