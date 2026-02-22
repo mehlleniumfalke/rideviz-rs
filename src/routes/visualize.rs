@@ -145,6 +145,26 @@ fn validate_dimensions(width: u32, height: u32) -> Result<(), AppError> {
     Ok(())
 }
 
+fn cap_mp4_dimensions_to_720p(width: u32, height: u32) -> (u32, u32) {
+    const MAX_PIXELS_720P: f64 = 1280.0 * 720.0;
+    let pixels = width as f64 * height as f64;
+    if pixels <= MAX_PIXELS_720P {
+        // Keep encoder-friendly even dimensions.
+        return (width & !1, height & !1);
+    }
+
+    let scale = (MAX_PIXELS_720P / pixels).sqrt();
+    let mut scaled_width = ((width as f64) * scale).round() as u32;
+    let mut scaled_height = ((height as f64) * scale).round() as u32;
+    if scaled_width % 2 != 0 {
+        scaled_width = scaled_width.saturating_sub(1);
+    }
+    if scaled_height % 2 != 0 {
+        scaled_height = scaled_height.saturating_sub(1);
+    }
+    (scaled_width.max(320), scaled_height.max(320))
+}
+
 /// Maps smoothing level (0-100) to internal route rendering parameters.
 /// Returns (simplify stride, curve tension).
 fn smoothing_to_route_params(level: usize) -> (usize, f32) {
@@ -583,6 +603,10 @@ async fn export_video(
     headers: axum::http::HeaderMap,
     Json(req): Json<VideoExportRequest>,
 ) -> Result<impl IntoResponse, AppError> {
+    const MAX_MP4_DURATION_SECONDS: f32 = 6.0;
+    const MAX_MP4_FPS: u32 = 30;
+    const MAX_MP4_FRAMES: u32 = 60;
+
     let token = bearer_token(&headers)
         .ok_or_else(|| AppError::Unauthorized("Missing bearer token".to_string()))?;
     let claims = verify_license_token(&token, &state.config().jwt_secret)
@@ -602,11 +626,6 @@ async fn export_video(
     match (req.width, req.height) {
         (Some(width), Some(height)) => {
             validate_dimensions(width, height)?;
-            if width % 2 != 0 || height % 2 != 0 {
-                return Err(AppError::BadRequest(
-                    "MP4 export requires even width and height".to_string(),
-                ));
-            }
             options.width = width;
             options.height = height;
         }
@@ -617,6 +636,19 @@ async fn export_video(
             ))
         }
     }
+    let (video_width, video_height) = cap_mp4_dimensions_to_720p(options.width, options.height);
+    if video_width != options.width || video_height != options.height {
+        tracing::info!(
+            "Capped MP4 dimensions from {}x{} to {}x{}",
+            options.width,
+            options.height,
+            video_width,
+            video_height
+        );
+    }
+    options.width = video_width;
+    options.height = video_height;
+
     options.stroke_width = req.stroke_width;
     options.padding = req.padding;
     options.smoothing = req.smoothing;
@@ -631,13 +663,10 @@ async fn export_video(
         None => None,
     };
 
-    let fps = req.fps.clamp(15, 60);
-    let duration_seconds = req.duration_seconds.clamp(3.0, 60.0);
+    let fps = req.fps.clamp(15, MAX_MP4_FPS);
+    let duration_seconds = req.duration_seconds.clamp(3.0, MAX_MP4_DURATION_SECONDS);
     let requested_frame_count = (duration_seconds * fps as f32).round() as u32;
-    let frame_count = requested_frame_count.clamp(24, 360);
-    let megapixels = (options.width as f64 * options.height as f64) / 1_000_000.0;
-    let frame_ceiling = if megapixels > 3.0 { 120 } else { 240 };
-    let frame_count = frame_count.min(frame_ceiling);
+    let frame_count = requested_frame_count.clamp(24, MAX_MP4_FRAMES);
     options.animation_frames = frame_count;
     options.animation_duration_ms = ((frame_count as f32 / fps as f32) * 1000.0).round() as u32;
 

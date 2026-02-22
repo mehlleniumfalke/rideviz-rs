@@ -6,7 +6,7 @@ interface DurationControlProps {
   onChange: (config: { duration?: number; fps?: number }) => void;
 }
 
-const snapPoints = [6, 9, 15, 30];
+const snapPoints = [3, 4, 5, 6];
 
 function estimateFileSizeKB(duration: number, fps: number, width = 1920, height = 1080): number {
   const frames = Math.round(duration * fps);
@@ -66,7 +66,7 @@ export default function DurationControl({
           <input
             type="range"
             min={3}
-            max={60}
+            max={6}
             step={1}
             value={duration}
             onChange={handleSliderChange}
@@ -82,7 +82,7 @@ export default function DurationControl({
             }}
           >
             <span>3s</span>
-            <span>60s</span>
+            <span>6s</span>
           </div>
         </div>
 
@@ -92,8 +92,8 @@ export default function DurationControl({
             <span style={{ fontSize: 'var(--text-xs)' }}>Frame rate</span>
             <span style={{ fontSize: 'var(--text-xs)', color: 'var(--gray)' }}>{fps} fps</span>
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 'var(--space-2)' }}>
-            {[15, 24, 30, 60].map((fpsOption) => (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 'var(--space-2)' }}>
+            {[15, 24, 30].map((fpsOption) => (
               <button
                 key={fpsOption}
                 onClick={() => onChange({ fps: fpsOption })}
