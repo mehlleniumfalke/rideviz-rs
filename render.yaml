@@ -18,5 +18,7 @@ services:
         value: 25
       - key: CACHE_TTL_SECONDS
         value: 3600
+      - key: VITE_POSTHOG_API_KEY
+        sync: false
     healthCheckPath: /health
     autoDeploy: true

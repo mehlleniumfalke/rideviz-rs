@@ -5,11 +5,17 @@ import { initAnalyticsContext } from './analytics/posthog'
 import './styles/index.css'
 import App from './App.tsx'
 
-posthog.init(import.meta.env.VITE_POSTHOG_API_KEY, {
-  api_host: 'https://eu.i.posthog.com',
-  capture_pageview: false, // manual pageview tracking below
-})
-initAnalyticsContext()
+const posthogApiKey = import.meta.env.VITE_POSTHOG_API_KEY
+
+if (posthogApiKey) {
+  posthog.init(posthogApiKey, {
+    api_host: 'https://eu.i.posthog.com',
+    capture_pageview: false, // manual pageview tracking below
+  })
+  initAnalyticsContext()
+} else {
+  console.error('[RideViz] Missing VITE_POSTHOG_API_KEY at build time.')
+}
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

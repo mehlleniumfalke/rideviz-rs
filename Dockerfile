@@ -3,10 +3,15 @@ FROM node:22-slim as frontend-builder
 
 WORKDIR /frontend
 
+# Render injects service env vars as Docker build args.
+ARG VITE_POSTHOG_API_KEY
+ENV VITE_POSTHOG_API_KEY=${VITE_POSTHOG_API_KEY}
+
 COPY rideviz-web/package.json rideviz-web/package-lock.json ./
 RUN npm ci
 
 COPY rideviz-web/ ./
+RUN test -n "$VITE_POSTHOG_API_KEY" || (echo "Missing VITE_POSTHOG_API_KEY during frontend build" && exit 1)
 RUN npm run build
 
 # Build stage
