@@ -8,11 +8,34 @@ interface DurationControlProps {
 
 const snapPoints = [3, 6, 9, 12, 15];
 
+const MAX_MP4_PIXELS_720P = 1280 * 720;
+const MP4_ESTIMATED_BITS_PER_PIXEL = 0.07;
+const MP4_ESTIMATED_OVERHEAD_MULTIPLIER = 1.05;
+
+function capMp4DimensionsTo720p(width: number, height: number): [number, number] {
+  const pixels = width * height;
+  if (pixels <= MAX_MP4_PIXELS_720P) {
+    return [width & ~1, height & ~1];
+  }
+
+  const scale = Math.sqrt(MAX_MP4_PIXELS_720P / pixels);
+  let scaledWidth = Math.round(width * scale);
+  let scaledHeight = Math.round(height * scale);
+
+  if (scaledWidth % 2 !== 0) scaledWidth -= 1;
+  if (scaledHeight % 2 !== 0) scaledHeight -= 1;
+
+  return [Math.max(320, scaledWidth), Math.max(320, scaledHeight)];
+}
+
 function estimateFileSizeKB(duration: number, fps: number, width = 1920, height = 1080): number {
-  const frames = Math.round(duration * fps);
-  const megapixels = (width * height) / 1_000_000;
-  const bytesPerFrame = megapixels * 50_000;
-  return Math.round((frames * bytesPerFrame) / 1024);
+  const boundedDuration = Math.min(15, Math.max(3, duration));
+  const boundedFps = Math.min(30, Math.max(24, fps));
+  const [videoWidth, videoHeight] = capMp4DimensionsTo720p(width, height);
+  const pixelsPerSecond = videoWidth * videoHeight * boundedFps;
+  const estimatedBits = pixelsPerSecond * boundedDuration * MP4_ESTIMATED_BITS_PER_PIXEL;
+  const estimatedBytes = (estimatedBits / 8) * MP4_ESTIMATED_OVERHEAD_MULTIPLIER;
+  return Math.max(200, Math.round(estimatedBytes / 1024));
 }
 
 function formatFileSize(kb: number): string {
