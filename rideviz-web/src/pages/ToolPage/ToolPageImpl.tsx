@@ -55,8 +55,8 @@ const FIXED_STROKE_WIDTH = 3;
 const FIXED_PADDING = 40;
 type ControlSectionKey = 'appearance' | 'export' | 'pro';
 
-const getStoredDuration = () => Math.min(6, Math.max(3, Number(localStorage.getItem(STORAGE_KEY_DURATION) ?? 6)));
-const getStoredFps = () => Math.min(30, Math.max(15, Number(localStorage.getItem(STORAGE_KEY_FPS) ?? 30)));
+const getStoredDuration = () => Math.min(15, Math.max(3, Number(localStorage.getItem(STORAGE_KEY_DURATION) ?? 9)));
+const getStoredFps = () => Math.min(30, Math.max(24, Number(localStorage.getItem(STORAGE_KEY_FPS) ?? 30)));
 const getIsCompactViewport = () => (typeof window !== 'undefined' ? window.matchMedia('(max-width: 1024px)').matches : false);
 
 export default function ToolPageImpl({ onNavigateHome }: ToolPageProps) {
@@ -361,8 +361,8 @@ export default function ToolPageImpl({ onNavigateHome }: ToolPageProps) {
     if (config.background === 'transparent') {
       throw new Error('MP4 export requires a black or white background.');
     }
-    const durationSeconds = Math.min(6, Math.max(3, config.duration));
-    const fps = Math.min(30, Math.max(15, config.fps));
+    const durationSeconds = Math.min(15, Math.max(3, config.duration));
+    const fps = Math.min(30, Math.max(24, config.fps));
     return {
       file_id: fileId,
       gradient: config.gradient,

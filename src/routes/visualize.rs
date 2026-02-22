@@ -603,9 +603,9 @@ async fn export_video(
     headers: axum::http::HeaderMap,
     Json(req): Json<VideoExportRequest>,
 ) -> Result<impl IntoResponse, AppError> {
-    const MAX_MP4_DURATION_SECONDS: f32 = 6.0;
+    const MAX_MP4_DURATION_SECONDS: f32 = 15.0;
     const MAX_MP4_FPS: u32 = 30;
-    const MAX_MP4_FRAMES: u32 = 60;
+    const MAX_MP4_FRAMES: u32 = 450;
 
     let token = bearer_token(&headers)
         .ok_or_else(|| AppError::Unauthorized("Missing bearer token".to_string()))?;
@@ -663,7 +663,7 @@ async fn export_video(
         None => None,
     };
 
-    let fps = req.fps.clamp(15, MAX_MP4_FPS);
+    let fps = req.fps.clamp(24, MAX_MP4_FPS);
     let duration_seconds = req.duration_seconds.clamp(3.0, MAX_MP4_DURATION_SECONDS);
     let requested_frame_count = (duration_seconds * fps as f32).round() as u32;
     let frame_count = requested_frame_count.clamp(24, MAX_MP4_FRAMES);
