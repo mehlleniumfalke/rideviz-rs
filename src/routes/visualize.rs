@@ -635,6 +635,9 @@ async fn export_video(
     let duration_seconds = req.duration_seconds.clamp(3.0, 60.0);
     let requested_frame_count = (duration_seconds * fps as f32).round() as u32;
     let frame_count = requested_frame_count.clamp(24, 360);
+    let megapixels = (options.width as f64 * options.height as f64) / 1_000_000.0;
+    let frame_ceiling = if megapixels > 3.0 { 120 } else { 240 };
+    let frame_count = frame_count.min(frame_ceiling);
     options.animation_frames = frame_count;
     options.animation_duration_ms = ((frame_count as f32 / fps as f32) * 1000.0).round() as u32;
 
@@ -767,6 +770,8 @@ fn encode_frames_to_mp4(frame_pattern: &FsPath, output_path: &FsPath, fps: u32) 
         .arg(frame_pattern)
         .arg("-c:v")
         .arg("libx264")
+        .arg("-preset")
+        .arg("veryfast")
         .arg("-pix_fmt")
         .arg("yuv420p")
         .arg("-movflags")
