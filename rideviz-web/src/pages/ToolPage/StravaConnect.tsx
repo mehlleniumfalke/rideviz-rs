@@ -5,6 +5,7 @@ import {
   importStravaActivity,
   listStravaActivities,
 } from '../../api/client';
+import { captureEvent } from '../../analytics/posthog';
 import type { StravaActivitySummary, StravaByoCredentials, UploadResponse } from '../../types/api';
 
 const PAGE_SIZE = 100;
@@ -58,7 +59,15 @@ export default function StravaConnect({ onImported, enabled, licenseToken }: Str
     return () => media.removeEventListener('change', sync);
   }, []);
 
-  const resetConnection = (message?: string) => {
+  useEffect(() => {
+    if (!enabled) {
+      captureEvent('rv_pro_paywall_seen', { source: 'strava_import' });
+      return;
+    }
+    captureEvent('rv_strava_panel_viewed', { has_saved_token: Boolean(token) });
+  }, [enabled, token]);
+
+  const resetConnection = (message?: string, options?: { trackDisconnect?: boolean }) => {
     localStorage.removeItem(STORAGE_KEY_STRAVA_TOKEN);
     setToken(null);
     setActivities([]);
@@ -66,6 +75,9 @@ export default function StravaConnect({ onImported, enabled, licenseToken }: Str
     setHasMore(true);
     setSearch('');
     setError(message ?? null);
+    if (options?.trackDisconnect) {
+      captureEvent('rv_strava_disconnected');
+    }
   };
 
   const readCredentials = (): StravaByoCredentials | undefined => {
@@ -89,12 +101,17 @@ export default function StravaConnect({ onImported, enabled, licenseToken }: Str
       if (!credentials) {
         localStorage.removeItem(STORAGE_KEY_STRAVA_CREDENTIALS);
         setStatus('Saved credentials cleared. RideViz default Strava app will be used.');
+        captureEvent('rv_strava_credentials_cleared');
       } else {
         localStorage.setItem(STORAGE_KEY_STRAVA_CREDENTIALS, JSON.stringify(credentials));
         setStatus('Personal Strava app credentials saved on this device.');
+        captureEvent('rv_strava_credentials_saved');
       }
       setError(null);
     } catch (err) {
+      captureEvent('rv_strava_credentials_save_failed', {
+        error: err instanceof Error ? err.message.slice(0, 160) : 'unknown_error',
+      });
       setError(err instanceof Error ? err.message : 'Failed to save Strava credentials.');
       setStatus(null);
     }
@@ -106,6 +123,7 @@ export default function StravaConnect({ onImported, enabled, licenseToken }: Str
     localStorage.removeItem(STORAGE_KEY_STRAVA_CREDENTIALS);
     setStatus('Saved credentials cleared. RideViz default Strava app will be used.');
     setError(null);
+    captureEvent('rv_strava_credentials_cleared');
   };
 
   const isSessionError = (message: string) => {
@@ -120,6 +138,10 @@ export default function StravaConnect({ onImported, enabled, licenseToken }: Str
 
   const handleActionError = (err: unknown, fallback: string) => {
     const message = err instanceof Error ? err.message : fallback;
+    captureEvent('rv_strava_error', {
+      action: fallback,
+      error: message.slice(0, 160),
+    });
     if (isSessionError(message)) {
       resetConnection('Strava session expired. Please reconnect.');
       return;
@@ -147,14 +169,25 @@ export default function StravaConnect({ onImported, enabled, licenseToken }: Str
         if (cancelled) return;
         localStorage.setItem(STORAGE_KEY_STRAVA_TOKEN, callback.access_token);
         setToken(callback.access_token);
+        captureEvent('rv_strava_oauth_completed', {
+          has_athlete_id: callback.athlete_id !== null,
+        });
         const fetched = await listStravaActivities(callback.access_token, 1);
         if (!cancelled) {
           setActivities(fetched);
           setPage(1);
           setHasMore(fetched.length === PAGE_SIZE);
+          captureEvent('rv_strava_activities_loaded', {
+            page: 1,
+            count: fetched.length,
+            append: false,
+          });
         }
       } catch (err) {
         if (!cancelled) {
+          captureEvent('rv_strava_oauth_failed', {
+            error: err instanceof Error ? err.message.slice(0, 160) : 'unknown_error',
+          });
           setError(err instanceof Error ? err.message : 'Failed to connect Strava');
           setStatus(null);
         }
@@ -178,8 +211,13 @@ export default function StravaConnect({ onImported, enabled, licenseToken }: Str
   }, [enabled, licenseToken]);
 
   const handleConnect = async () => {
+    captureEvent('rv_strava_connect_clicked', {
+      enabled,
+      has_license_token: Boolean(licenseToken),
+    });
     if (!enabled) return;
     if (!licenseToken) {
+      captureEvent('rv_pro_intent', { source: 'strava_connect' });
       setError('Pro license required. Please verify your license and try again.');
       setStatus(null);
       return;
@@ -190,6 +228,9 @@ export default function StravaConnect({ onImported, enabled, licenseToken }: Str
     try {
       const credentials = readCredentials();
       const auth = await getStravaAuthUrl(licenseToken, credentials);
+      captureEvent('rv_strava_oauth_started', {
+        custom_credentials: Boolean(credentials),
+      });
       window.location.assign(auth.auth_url);
     } catch (err) {
       handleActionError(err, 'Failed to connect Strava');
@@ -205,6 +246,11 @@ export default function StravaConnect({ onImported, enabled, licenseToken }: Str
       setActivities((prev) => (append ? [...prev, ...fetched] : fetched));
       setPage(nextPage);
       setHasMore(fetched.length === PAGE_SIZE);
+      captureEvent('rv_strava_activities_loaded', {
+        page: nextPage,
+        count: fetched.length,
+        append,
+      });
     } catch (err) {
       handleActionError(err, 'Failed to load activities');
     } finally {
@@ -219,12 +265,20 @@ export default function StravaConnect({ onImported, enabled, licenseToken }: Str
 
   const handleImport = async (activityId: number) => {
     if (!enabled || !token) return;
+    captureEvent('rv_strava_import_started', { activity_id: activityId });
     setLoading(true);
     setError(null);
     try {
       const response = await importStravaActivity(token, activityId);
       onImported(response);
+      captureEvent('rv_strava_import_succeeded', {
+        activity_id: activityId,
+      });
     } catch (err) {
+      captureEvent('rv_strava_import_failed', {
+        activity_id: activityId,
+        error: err instanceof Error ? err.message.slice(0, 160) : 'unknown_error',
+      });
       handleActionError(err, 'Failed to import activity');
     } finally {
       setLoading(false);
@@ -442,7 +496,7 @@ export default function StravaConnect({ onImported, enabled, licenseToken }: Str
                 No activities match "{search}"
               </div>
             )}
-            <button onClick={() => resetConnection()} disabled={loading} aria-label="Disconnect Strava">
+            <button onClick={() => resetConnection(undefined, { trackDisconnect: true })} disabled={loading} aria-label="Disconnect Strava">
               Disconnect Strava
             </button>
             <div style={{ fontSize: 'var(--text-xs)', color: 'var(--gray)', textAlign: 'center' }}>

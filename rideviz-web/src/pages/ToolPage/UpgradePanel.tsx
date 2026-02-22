@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { createCheckoutSession, verifyLicense } from '../../api/client';
+import { captureEvent } from '../../analytics/posthog';
 
 interface UpgradePanelProps {
   onLicenseToken: (token: string | null) => void;
@@ -18,9 +19,17 @@ export default function UpgradePanel({ onLicenseToken, currentToken, hasProAcces
     setTokenInput(currentToken ?? '');
   }, [currentToken]);
 
+  useEffect(() => {
+    captureEvent('rv_pro_panel_viewed', { has_pro_access: hasProAccess });
+  }, [hasProAccess]);
+
   const handleCheckout = async () => {
+    captureEvent('rv_checkout_started', {
+      has_email: Boolean(email.trim()),
+    });
     if (!email.trim()) {
       setStatus('Email is required.');
+      captureEvent('rv_checkout_blocked', { reason: 'missing_email' });
       return;
     }
     setLoading(true);
@@ -28,8 +37,15 @@ export default function UpgradePanel({ onLicenseToken, currentToken, hasProAcces
     try {
       const checkout = await createCheckoutSession(email.trim());
       window.open(checkout.checkout_url, '_blank', 'noopener,noreferrer');
+      captureEvent('rv_checkout_opened', {
+        mode: checkout.mode,
+        email_domain: email.includes('@') ? email.split('@')[1] : null,
+      });
       setStatus(checkout.mode === 'mock' ? 'Mock checkout opened.' : 'Checkout opened.');
     } catch (error) {
+      captureEvent('rv_checkout_failed', {
+        error: error instanceof Error ? error.message.slice(0, 160) : 'unknown_error',
+      });
       setStatus(error instanceof Error ? error.message : 'Failed to start checkout.');
     } finally {
       setLoading(false);
@@ -38,6 +54,7 @@ export default function UpgradePanel({ onLicenseToken, currentToken, hasProAcces
 
   const handleVerify = async () => {
     const token = tokenInput.trim() || currentToken?.trim() || '';
+    captureEvent('rv_license_verify_clicked', { has_token: Boolean(token) });
     if (!token) {
       setStatus('No license token set.');
       return;
@@ -49,9 +66,13 @@ export default function UpgradePanel({ onLicenseToken, currentToken, hasProAcces
     setStatus(null);
     try {
       const verification = await verifyLicense(token);
+      captureEvent('rv_license_verify_succeeded', { pro: verification.pro });
       setStatus(verification.pro ? `Pro active for ${verification.email}` : 'Valid free token.');
     } catch (error) {
       onLicenseToken(null);
+      captureEvent('rv_license_verify_failed', {
+        error: error instanceof Error ? error.message.slice(0, 160) : 'unknown_error',
+      });
       setStatus(error instanceof Error ? error.message : 'License verification failed.');
     } finally {
       setLoading(false);
@@ -62,11 +83,29 @@ export default function UpgradePanel({ onLicenseToken, currentToken, hasProAcces
     const token = tokenInput.trim();
     if (!token) {
       onLicenseToken(null);
+      captureEvent('rv_license_token_cleared');
       setStatus('License token cleared.');
       return;
     }
     onLicenseToken(token);
+    captureEvent('rv_license_token_saved');
     setStatus('License token saved locally.');
+  };
+
+  const toggleLicenseControls = () => {
+    setShowLicenseControls((prev) => {
+      const next = !prev;
+      captureEvent('rv_license_controls_toggled', { open: next });
+      if (next && !hasProAccess) {
+        captureEvent('rv_pro_intent', { source: 'license_controls' });
+      }
+      return next;
+    });
+  };
+
+  const handleClearToken = () => {
+    onLicenseToken(null);
+    captureEvent('rv_license_token_cleared');
   };
 
   return (
@@ -99,7 +138,7 @@ export default function UpgradePanel({ onLicenseToken, currentToken, hasProAcces
             </button>
           </>
         )}
-        <button onClick={() => setShowLicenseControls((prev) => !prev)} disabled={loading}>
+        <button onClick={toggleLicenseControls} disabled={loading}>
           {showLicenseControls ? 'Hide License Key' : hasProAccess ? 'Manage License Key' : 'Enter License Key'}
         </button>
         {showLicenseControls && (
@@ -117,7 +156,7 @@ export default function UpgradePanel({ onLicenseToken, currentToken, hasProAcces
               Verify License
             </button>
             {currentToken && (
-              <button onClick={() => onLicenseToken(null)} disabled={loading}>
+              <button onClick={handleClearToken} disabled={loading}>
                 Clear License
               </button>
             )}

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import posthog from 'posthog-js';
+import { captureEvent } from './analytics/posthog';
 import ToolPage from './pages/ToolPage/ToolPageImpl';
 
 type RoutePath = '/' | '/app';
@@ -12,7 +12,15 @@ function App() {
   const [routePath, setRoutePath] = useState<RoutePath>(getRoutePath());
 
   useEffect(() => {
-    posthog.capture('$pageview', { path: routePath });
+    captureEvent('$pageview', { path: routePath });
+  }, [routePath]);
+
+  useEffect(() => {
+    if (routePath === '/app') {
+      captureEvent('rv_app_opened', {
+        referrer: document.referrer || null,
+      });
+    }
   }, [routePath]);
 
   useEffect(() => {
@@ -25,6 +33,7 @@ function App() {
 
   function navigate(path: RoutePath) {
     if (window.location.pathname === path) return;
+    captureEvent('rv_navigation', { to_path: path });
     window.history.pushState({}, '', path);
     setRoutePath(path);
   }
@@ -73,7 +82,10 @@ function App() {
         </div>
 
         <button
-          onClick={() => navigate('/app')}
+          onClick={() => {
+            captureEvent('rv_app_cta_click', { source: 'web_home' });
+            navigate('/app');
+          }}
           style={{ padding: 'var(--space-3) var(--space-6)', fontSize: 'var(--text-base)' }}
         >
           Start →

@@ -1,6 +1,5 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import posthog from 'posthog-js';
 import {
   completeCheckoutSession,
   exportVideo,
@@ -10,6 +9,7 @@ import {
   verifyLicense,
   uploadFile,
 } from '../../api/client';
+import { captureEvent } from '../../analytics/posthog';
 import { mapLinearProgressToRoute } from '../../engine/animate';
 import { renderFrame } from '../../engine/render';
 import { addGenerationHistoryEntry } from '../../storage/history';
@@ -59,6 +59,13 @@ const getStoredDuration = () => Math.min(15, Math.max(3, Number(localStorage.get
 const getStoredFps = () => Math.min(30, Math.max(24, Number(localStorage.getItem(STORAGE_KEY_FPS) ?? 30)));
 const getIsCompactViewport = () => (typeof window !== 'undefined' ? window.matchMedia('(max-width: 1024px)').matches : false);
 
+function errorToAnalyticsMessage(error: unknown): string {
+  if (error instanceof Error && error.message.trim()) {
+    return error.message.slice(0, 160);
+  }
+  return 'unknown_error';
+}
+
 export default function ToolPageImpl({ onNavigateHome }: ToolPageProps) {
   const [fileId, setFileId] = useState<string | null>(null);
   const [routeData, setRouteData] = useState<VizData | null>(null);
@@ -86,7 +93,15 @@ export default function ToolPageImpl({ onNavigateHome }: ToolPageProps) {
 
   const previewCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const trackedPreviewFilesRef = useRef<Set<string>>(new Set());
+  const previousAnimatedRef = useRef(config.animated);
   const selectedFormat = useMemo(() => getExportFormat(config.exportPreset), [config.exportPreset]);
+
+  useEffect(() => {
+    captureEvent('rv_tool_opened', {
+      has_saved_license_token: Boolean(localStorage.getItem(STORAGE_KEY_LICENSE)),
+    });
+  }, []);
 
   const handleImportedActivity = (response: UploadResponse) => {
     setFileId(response.file_id);
@@ -103,15 +118,31 @@ export default function ToolPageImpl({ onNavigateHome }: ToolPageProps) {
       }
       return { ...prev, stats: filtered };
     });
+    captureEvent('rv_activity_import_succeeded', {
+      file_type: response.file_type,
+      has_elevation: response.available_data.has_elevation,
+      has_heart_rate: response.available_data.has_heart_rate,
+      has_power: response.available_data.has_power,
+      distance_km: Number(response.metrics.distance_km.toFixed(2)),
+      duration_seconds: response.metrics.duration_seconds,
+    });
   };
 
   const handleFileSelect = async (file: File) => {
     setIsUploading(true);
     setUploadError(null);
+    captureEvent('rv_upload_started', {
+      file_extension: file.name.split('.').pop()?.toLowerCase() ?? 'unknown',
+      file_size_kb: Math.round(file.size / 1024),
+    });
     try {
       handleImportedActivity(await uploadFile(file));
     } catch (error) {
-      setUploadError(error instanceof Error ? error.message : 'Upload failed');
+      const message = error instanceof Error ? error.message : 'Upload failed';
+      captureEvent('rv_upload_failed', {
+        error: errorToAnalyticsMessage(error),
+      });
+      setUploadError(message);
     } finally {
       setIsUploading(false);
     }
@@ -121,6 +152,7 @@ export default function ToolPageImpl({ onNavigateHome }: ToolPageProps) {
     if (!fileId) return;
     if (availableData && !availableData.has_elevation) {
       setPreviewError('3D animation requires elevation data.');
+      captureEvent('rv_preview_blocked', { reason: 'missing_elevation' });
       return;
     }
     abortControllerRef.current?.abort();
@@ -128,9 +160,33 @@ export default function ToolPageImpl({ onNavigateHome }: ToolPageProps) {
     abortControllerRef.current = controller;
     setIsLoadingPreview(true);
     setPreviewError(null);
+    captureEvent('rv_preview_requested', {
+      color_by: config.colorBy ?? 'none',
+      smoothing: config.smoothing,
+      has_file: true,
+    });
     getRouteData(fileId, { colorBy: config.colorBy ?? undefined, smoothing: config.smoothing })
-      .then((response) => !controller.signal.aborted && setRouteData(response.viz_data))
-      .catch((error) => !controller.signal.aborted && setPreviewError(error instanceof Error ? error.message : 'Failed to load route data'))
+      .then((response) => {
+        if (controller.signal.aborted) return;
+        setRouteData(response.viz_data);
+        if (!trackedPreviewFilesRef.current.has(fileId)) {
+          trackedPreviewFilesRef.current.add(fileId);
+          captureEvent('rv_generation_ready', {
+            color_by: config.colorBy ?? 'none',
+            smoothing: config.smoothing,
+            point_count: response.viz_data.points.length,
+          });
+        }
+      })
+      .catch((error) => {
+        if (controller.signal.aborted) return;
+        captureEvent('rv_preview_failed', {
+          error: errorToAnalyticsMessage(error),
+          color_by: config.colorBy ?? 'none',
+          smoothing: config.smoothing,
+        });
+        setPreviewError(error instanceof Error ? error.message : 'Failed to load route data');
+      })
       .finally(() => !controller.signal.aborted && setIsLoadingPreview(false));
     return () => controller.abort();
   }, [fileId, availableData, config.colorBy, config.smoothing]);
@@ -140,6 +196,20 @@ export default function ToolPageImpl({ onNavigateHome }: ToolPageProps) {
       setConfig((prev) => ({ ...prev, colorBy: null }));
     }
   }, [config.gradient, config.colorBy]);
+
+  useEffect(() => {
+    if (previousAnimatedRef.current === config.animated) return;
+    captureEvent('rv_animation_mode_changed', {
+      animated: config.animated,
+      has_pro_access: hasProAccess,
+    });
+    if (config.animated && !hasProAccess) {
+      captureEvent('rv_pro_intent', {
+        source: 'animated_toggle',
+      });
+    }
+    previousAnimatedRef.current = config.animated;
+  }, [config.animated, hasProAccess]);
 
   useEffect(() => {
     const media = window.matchMedia('(max-width: 1024px)');
@@ -202,9 +272,15 @@ export default function ToolPageImpl({ onNavigateHome }: ToolPageProps) {
         const verification = await verifyLicense(licenseToken);
         if (cancelled) return;
         setHasProAccess(Boolean(verification.pro));
+        captureEvent('rv_license_verified', {
+          pro: Boolean(verification.pro),
+        });
       } catch (error) {
         if (cancelled) return;
         console.error('License verification failed:', error);
+        captureEvent('rv_license_verify_failed', {
+          error: errorToAnalyticsMessage(error),
+        });
         setHasProAccess(false);
         setLicenseToken(null);
       }
@@ -246,14 +322,23 @@ export default function ToolPageImpl({ onNavigateHome }: ToolPageProps) {
           });
           if (cancelled) return;
           setLicenseToken(result.token);
-          posthog.capture('license_issued_mock', { email });
+          captureEvent('rv_checkout_completed', {
+            mode: 'mock',
+            email_domain: email.includes('@') ? email.split('@')[1] : null,
+          });
+          captureEvent('license_issued_mock', { email_domain: email.includes('@') ? email.split('@')[1] : null });
         } else if (checkout === 'success' && sessionId && !licenseToken) {
           const result = await completeCheckoutSession(sessionId);
           if (cancelled) return;
           setLicenseToken(result.token);
-          posthog.capture('license_issued_checkout', { sessionId });
+          captureEvent('rv_checkout_completed', {
+            mode: 'stripe',
+            has_session_id: Boolean(sessionId),
+          });
+          captureEvent('license_issued_checkout', { has_session_id: Boolean(sessionId) });
         } else if (checkout === 'cancel') {
-          posthog.capture('checkout_cancelled');
+          captureEvent('rv_checkout_cancelled');
+          captureEvent('checkout_cancelled');
         }
 
         if (cancelled) return;
@@ -261,6 +346,10 @@ export default function ToolPageImpl({ onNavigateHome }: ToolPageProps) {
       } catch (error) {
         if (!cancelled) {
           console.error('Checkout completion failed:', error);
+          captureEvent('rv_checkout_completion_failed', {
+            error: errorToAnalyticsMessage(error),
+            checkout_state: checkout,
+          });
           clearCheckoutParams();
         }
       }
@@ -413,22 +502,45 @@ export default function ToolPageImpl({ onNavigateHome }: ToolPageProps) {
     return 'Export failed. Try a shorter duration, lower FPS, or smaller format.';
   };
 
+  const getExportProperties = (channel: 'download' | 'share') => ({
+    channel,
+    animated: config.animated,
+    export_preset: config.exportPreset,
+    color_by: config.colorBy ?? 'none',
+    background: config.background,
+    gradient: config.gradient,
+    has_pro_access: hasProAccess,
+    stats_count: config.stats.length,
+  });
+
   const handleDownload = async () => {
     if (!fileId) return;
+    captureEvent('rv_export_started', getExportProperties('download'));
     setIsExporting(true);
     setShareStatus(null);
     try {
+      let exportedFormat: 'png' | 'mp4';
       if (config.animated) {
         const { blob, fileName } = await buildVideoBlob();
         downloadBlob(blob, fileName);
+        exportedFormat = 'mp4';
       } else {
         const blob = await buildStaticBlob();
         downloadBlob(blob, 'rideviz-route.png');
+        exportedFormat = 'png';
       }
       persistHistory();
-      posthog.capture('download_export', { animated: config.animated, exportPreset: config.exportPreset });
+      captureEvent('rv_export_succeeded', {
+        ...getExportProperties('download'),
+        format: exportedFormat,
+      });
+      captureEvent('download_export', { animated: config.animated, exportPreset: config.exportPreset });
     } catch (error) {
       console.error('Download failed:', error);
+      captureEvent('rv_export_failed', {
+        ...getExportProperties('download'),
+        error: errorToAnalyticsMessage(error),
+      });
       setShareStatus(getExportErrorMessage(error));
     } finally {
       setIsExporting(false);
@@ -437,6 +549,7 @@ export default function ToolPageImpl({ onNavigateHome }: ToolPageProps) {
 
   const handleShare = async () => {
     if (!fileId) return;
+    captureEvent('rv_export_started', getExportProperties('share'));
     setIsExporting(true);
     setShareStatus(null);
     try {
@@ -456,24 +569,39 @@ export default function ToolPageImpl({ onNavigateHome }: ToolPageProps) {
         );
         persistHistory();
         setShareStatus(copied ? 'Link copied and share options opened.' : 'Share options opened.');
-        posthog.capture('share_export_fallback', { copied, animated: config.animated });
+        captureEvent('rv_share_fallback', {
+          ...getExportProperties('share'),
+          copied,
+        });
+        captureEvent('share_export_fallback', { copied, animated: config.animated });
         return;
       }
 
       let blob: Blob;
       let fileName: string;
+      let exportedFormat: 'png' | 'mp4';
       if (config.animated) {
         ({ blob, fileName } = await buildVideoBlob());
+        exportedFormat = 'mp4';
       } else {
         blob = await buildStaticBlob();
         fileName = 'rideviz-route.png';
+        exportedFormat = 'png';
       }
       await navigator.share({ title: 'RideViz export', text: 'Made with rideviz.online', files: [new File([blob], fileName, { type: blob.type || 'application/octet-stream' })] });
       persistHistory();
       setShareStatus('Shared successfully.');
-      posthog.capture('share_export', { animated: config.animated });
+      captureEvent('rv_export_succeeded', {
+        ...getExportProperties('share'),
+        format: exportedFormat,
+      });
+      captureEvent('share_export', { animated: config.animated });
     } catch (error) {
       console.error('Share failed:', error);
+      captureEvent('rv_export_failed', {
+        ...getExportProperties('share'),
+        error: errorToAnalyticsMessage(error),
+      });
       setShareStatus(getExportErrorMessage(error));
     } finally {
       setIsExporting(false);
@@ -482,6 +610,7 @@ export default function ToolPageImpl({ onNavigateHome }: ToolPageProps) {
 
   const handleReset = () => {
     abortControllerRef.current?.abort();
+    captureEvent('rv_activity_reset');
     setFileId(null);
     setRouteData(null);
     setAvailableData(null);
@@ -492,7 +621,11 @@ export default function ToolPageImpl({ onNavigateHome }: ToolPageProps) {
   };
 
   const toggleSection = (section: ControlSectionKey) => {
-    setCollapsedSections((prev) => ({ ...prev, [section]: !prev[section] }));
+    setCollapsedSections((prev) => {
+      const next = !prev[section];
+      captureEvent('rv_control_section_toggled', { section, expanded: next });
+      return { ...prev, [section]: next };
+    });
   };
 
   const canShare = typeof navigator !== 'undefined' && typeof navigator.share === 'function';
@@ -530,7 +663,15 @@ export default function ToolPageImpl({ onNavigateHome }: ToolPageProps) {
   return (
     <div className={`tool-page${showActionButtons ? ' tool-page--with-actions' : ''}`} style={{ minHeight: '100vh', padding: 'var(--space-4)' }}>
       <header style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', marginBottom: 'var(--space-4)', paddingBottom: 'var(--space-4)', borderBottom: 'var(--border)' }}>
-        <button onClick={onNavigateHome} aria-label="Back to home">← Back</button>
+        <button
+          onClick={() => {
+            captureEvent('rv_navigation', { to_path: '/' });
+            onNavigateHome();
+          }}
+          aria-label="Back to home"
+        >
+          ← Back
+        </button>
         <h1 style={{ fontSize: 'var(--text-xl)', fontWeight: 600 }}>RideViz</h1>
       </header>
       <div className={`tool-layout${fileId ? ' tool-layout--loaded' : ''}`} style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 320px', gap: 'var(--space-4)', minHeight: 'calc(100vh - 100px)' }}>
