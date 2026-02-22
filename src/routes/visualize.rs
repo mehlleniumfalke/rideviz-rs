@@ -473,7 +473,7 @@ async fn visualize(
         let duration_ms = (duration_secs * 1000.0).round() as u32;
         (frames, duration_ms)
     } else {
-        let frames = req.animation_frames.unwrap_or(options.animation_frames).clamp(8, 180);
+        let frames = req.animation_frames.unwrap_or(options.animation_frames).clamp(8, 60);
         let duration_ms = req.animation_duration_ms.unwrap_or(options.animation_duration_ms).clamp(500, 8000);
         (frames, duration_ms)
     };
@@ -483,11 +483,11 @@ async fn visualize(
 
     let megapixels = (options.width as f64 * options.height as f64) / 1_000_000.0;
     let frame_ceiling = if megapixels > 6.0 {
-        56
+        30
     } else if megapixels > 3.0 {
-        84
+        45
     } else {
-        140
+        60
     };
     options.animation_frames = options.animation_frames.min(frame_ceiling);
 
@@ -555,19 +555,9 @@ async fn visualize(
             })?;
             rasterize::rasterize(&svg, &output_for_render)
         } else {
-        // Animated output
-            let stats_for_animation = build_stats_overlay_items_at_progress(
-                &specs_for_render,
-                &viz_data_for_render,
-                &metrics_for_render,
-                1.0,
-            );
-            animate::render_apng(
-                &viz_data_for_render,
-                &options_for_render,
-                &output_for_render,
-                &stats_for_animation,
-            )
+            Err(crate::error::RasterError::AnimationFailed(
+                "Animated PNG export is not supported. Use /api/export/video for video export.".to_string(),
+            ))
         }
     })
     .await
