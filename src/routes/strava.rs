@@ -19,6 +19,8 @@ use crate::{
     types::activity::{AvailableData, Metrics, ParsedActivity, TrackPoint},
 };
 
+const STRAVA_ACTIVITY_PAGE_SIZE: usize = 100;
+
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/strava/auth", post(strava_auth))
@@ -58,6 +60,12 @@ struct StravaActivitySummary {
     name: String,
     distance_m: f64,
     start_date: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct StravaActivitiesResponse {
+    activities: Vec<StravaActivitySummary>,
+    next_page: Option<u32>,
 }
 
 #[derive(Debug, Serialize)]
@@ -229,7 +237,7 @@ async fn list_activities(
     State(state): State<AppState>,
     headers: HeaderMap,
     Query(params): Query<ListActivitiesQuery>,
-) -> Result<Json<Vec<StravaActivitySummary>>, AppError> {
+) -> Result<Json<StravaActivitiesResponse>, AppError> {
     let access_token = bearer_token(&headers)
         .ok_or_else(|| AppError::Unauthorized("Missing Strava Bearer token".to_string()))?;
     let session = state
@@ -238,8 +246,8 @@ async fn list_activities(
 
     let page = params.page.unwrap_or(1);
     let url = format!(
-        "https://www.strava.com/api/v3/athlete/activities?per_page=100&page={}",
-        page
+        "https://www.strava.com/api/v3/athlete/activities?per_page={}&page={}",
+        STRAVA_ACTIVITY_PAGE_SIZE, page
     );
 
     let client = reqwest::Client::new();
@@ -264,8 +272,10 @@ async fn list_activities(
         .await
         .map_err(|err| AppError::Internal(format!("Invalid Strava activities response: {}", err)))?;
 
+    let has_more = payload.len() == STRAVA_ACTIVITY_PAGE_SIZE;
     let activities = payload
         .into_iter()
+        .filter(is_supported_activity)
         .filter_map(|activity| {
             let id = activity.get("id").and_then(Value::as_u64)?;
             Some(StravaActivitySummary {
@@ -287,7 +297,10 @@ async fn list_activities(
         })
         .collect();
 
-    Ok(Json(activities))
+    Ok(Json(StravaActivitiesResponse {
+        activities,
+        next_page: has_more.then_some(page + 1),
+    }))
 }
 
 async fn import_activity(
@@ -423,4 +436,42 @@ fn require_pro_license(state: &AppState, headers: &HeaderMap) -> Result<(), AppE
         ));
     }
     Ok(())
+}
+
+fn is_supported_activity(activity: &Value) -> bool {
+    let activity_type = activity
+        .get("sport_type")
+        .and_then(Value::as_str)
+        .or_else(|| activity.get("type").and_then(Value::as_str));
+
+    matches!(
+        activity_type,
+        Some("Ride" | "Run" | "EBikeRide" | "VirtualRide")
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_supported_activity;
+    use serde_json::json;
+
+    #[test]
+    fn accepts_ride_and_run_activity_types() {
+        assert!(is_supported_activity(&json!({"sport_type": "Ride"})));
+        assert!(is_supported_activity(&json!({"sport_type": "Run"})));
+        assert!(is_supported_activity(&json!({"sport_type": "EBikeRide"})));
+        assert!(is_supported_activity(&json!({"sport_type": "VirtualRide"})));
+        assert!(is_supported_activity(&json!({"type": "Ride"})));
+        assert!(is_supported_activity(&json!({"type": "Run"})));
+        assert!(is_supported_activity(&json!({"type": "EBikeRide"})));
+        assert!(is_supported_activity(&json!({"type": "VirtualRide"})));
+    }
+
+    #[test]
+    fn rejects_non_route_activity_types() {
+        assert!(!is_supported_activity(&json!({"sport_type": "Workout"})));
+        assert!(!is_supported_activity(&json!({"sport_type": "WeightTraining"})));
+        assert!(!is_supported_activity(&json!({"type": "Workout"})));
+        assert!(!is_supported_activity(&json!({})));
+    }
 }

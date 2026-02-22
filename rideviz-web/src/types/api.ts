@@ -140,6 +140,11 @@ export interface StravaActivitySummary {
   start_date: string | null;
 }
 
+export interface StravaActivitiesResponse {
+  activities: StravaActivitySummary[];
+  next_page: number | null;
+}
+
 export interface CheckoutResponse {
   checkout_url: string;
   mode: 'live' | 'mock';

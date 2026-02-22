@@ -3,7 +3,7 @@ import type {
   LicenseResponse,
   LicenseVerifyResponse,
   RouteDataResponse,
-  StravaActivitySummary,
+  StravaActivitiesResponse,
   StravaAuthResponse,
   StravaByoCredentials,
   StravaCallbackResponse,
@@ -195,14 +195,14 @@ export async function completeStravaAuth(
   return (await response.json()) as StravaCallbackResponse;
 }
 
-export async function listStravaActivities(authToken: string, page = 1): Promise<StravaActivitySummary[]> {
+export async function listStravaActivities(authToken: string, page = 1): Promise<StravaActivitiesResponse> {
   const response = await fetch(buildUrl(`/api/strava/activities?page=${page}`), {
     headers: { Authorization: `Bearer ${authToken}` },
   });
   if (!response.ok) {
     throw new Error(await readError(response));
   }
-  return (await response.json()) as StravaActivitySummary[];
+  return (await response.json()) as StravaActivitiesResponse;
 }
 
 export async function importStravaActivity(

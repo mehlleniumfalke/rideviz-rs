@@ -8,7 +8,6 @@ import {
 import { captureEvent } from '../../analytics/posthog';
 import type { StravaActivitySummary, StravaByoCredentials, UploadResponse } from '../../types/api';
 
-const PAGE_SIZE = 100;
 const STRAVA_ORANGE = '#FC5200';
 
 interface StravaConnectProps {
@@ -174,12 +173,12 @@ export default function StravaConnect({ onImported, enabled, licenseToken }: Str
         });
         const fetched = await listStravaActivities(callback.access_token, 1);
         if (!cancelled) {
-          setActivities(fetched);
-          setPage(1);
-          setHasMore(fetched.length === PAGE_SIZE);
+          setActivities(fetched.activities);
+          setPage(fetched.next_page ?? 1);
+          setHasMore(fetched.next_page !== null);
           captureEvent('rv_strava_activities_loaded', {
             page: 1,
-            count: fetched.length,
+            count: fetched.activities.length,
             append: false,
           });
         }
@@ -243,12 +242,12 @@ export default function StravaConnect({ onImported, enabled, licenseToken }: Str
     setError(null);
     try {
       const fetched = await listStravaActivities(tok, nextPage);
-      setActivities((prev) => (append ? [...prev, ...fetched] : fetched));
-      setPage(nextPage);
-      setHasMore(fetched.length === PAGE_SIZE);
+      setActivities((prev) => (append ? [...prev, ...fetched.activities] : fetched.activities));
+      setPage(fetched.next_page ?? nextPage);
+      setHasMore(fetched.next_page !== null);
       captureEvent('rv_strava_activities_loaded', {
         page: nextPage,
-        count: fetched.length,
+        count: fetched.activities.length,
         append,
       });
     } catch (err) {
@@ -259,8 +258,8 @@ export default function StravaConnect({ onImported, enabled, licenseToken }: Str
   };
 
   const handleLoadMore = () => {
-    if (!token) return;
-    void handleLoadActivities(token, page + 1, true);
+    if (!token || !hasMore) return;
+    void handleLoadActivities(token, page, true);
   };
 
   const handleImport = async (activityId: number) => {
@@ -405,22 +404,30 @@ export default function StravaConnect({ onImported, enabled, licenseToken }: Str
         ) : (
           <>
             {activities.length === 0 && !loading && (
-              <button
-                onClick={() => token && void handleLoadActivities(token, 1, false)}
-                disabled={loading || !enabled}
-                aria-label="Load Strava activities"
-                style={{
-                  height: 48,
-                  background: STRAVA_ORANGE,
-                  color: 'white',
-                  border: 'none',
-                  fontWeight: 600,
-                  fontSize: 'var(--text-sm)',
-                  opacity: loading ? 0.7 : 1,
-                }}
-              >
-                Load activities
-              </button>
+              <>
+                {hasMore ? (
+                  <button
+                    onClick={() => token && void handleLoadActivities(token, page, false)}
+                    disabled={loading || !enabled}
+                    aria-label="Load Strava activities"
+                    style={{
+                      height: 48,
+                      background: STRAVA_ORANGE,
+                      color: 'white',
+                      border: 'none',
+                      fontWeight: 600,
+                      fontSize: 'var(--text-sm)',
+                      opacity: loading ? 0.7 : 1,
+                    }}
+                  >
+                    Load activities
+                  </button>
+                ) : (
+                  <div style={{ fontSize: 'var(--text-xs)', color: 'var(--gray)', textAlign: 'center', padding: 'var(--space-2)' }}>
+                    No Ride, Run, eBike, or Virtual Ride activities were found.
+                  </div>
+                )}
+              </>
             )}
             {activities.length > 0 && (
               <input
