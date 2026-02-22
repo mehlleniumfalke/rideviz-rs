@@ -267,15 +267,31 @@ fn fit_to_viewport(
 }
 
 fn build_wall_polygons(points: &[ProjectedPoint], gradient: &Gradient) -> String {
-    let mut walls: Vec<(f64, String)> = Vec::new();
-    for i in 0..points.len().saturating_sub(1) {
+    let n = points.len().saturating_sub(1);
+    if n == 0 {
+        return String::new();
+    }
+
+    // Collect (sort_key, index) pairs and sort by y without allocating per-polygon Strings.
+    let mut order: Vec<(f64, usize)> = (0..n)
+        .map(|i| {
+            let y_center = (points[i].ground.1 + points[i + 1].ground.1) * 0.5;
+            (y_center, i)
+        })
+        .collect();
+    order.sort_unstable_by(|a, b| a.0.total_cmp(&b.0));
+
+    let mut out = String::with_capacity(n * 145);
+    for (_, i) in order {
         let current = points[i];
         let next = points[i + 1];
         let t = current
             .value
-            .unwrap_or_else(|| i as f64 / (points.len().saturating_sub(1).max(1)) as f64);
+            .unwrap_or_else(|| i as f64 / n.max(1) as f64);
         let color = gradient.interpolate(remap_color_contrast(t));
-        let polygon = format!(
+        use std::fmt::Write as _;
+        let _ = write!(
+            out,
             r#"<polygon points="{:.2},{:.2} {:.2},{:.2} {:.2},{:.2} {:.2},{:.2}" fill="{}" fill-opacity="{:.2}"/>"#,
             current.ground.0,
             current.ground.1,
@@ -288,10 +304,8 @@ fn build_wall_polygons(points: &[ProjectedPoint], gradient: &Gradient) -> String
             color,
             WALL_FILL_OPACITY
         );
-        walls.push((((current.ground.1 + next.ground.1) * 0.5), polygon));
     }
-    walls.sort_by(|a, b| a.0.total_cmp(&b.0));
-    walls.into_iter().map(|(_, svg)| svg).collect()
+    out
 }
 
 fn split_projected_points(

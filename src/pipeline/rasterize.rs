@@ -1,22 +1,17 @@
-use std::cell::RefCell;
+use std::sync::OnceLock;
 
 use crate::error::RasterError;
 use crate::types::viz::OutputConfig;
 
-thread_local! {
-    static FONT_DB: RefCell<usvg::fontdb::Database> = RefCell::new(load_font_db());
-}
+static FONT_DB: OnceLock<usvg::fontdb::Database> = OnceLock::new();
 
 pub fn rasterize(svg: &str, config: &OutputConfig) -> Result<Vec<u8>, RasterError> {
-    FONT_DB.with(|fontdb| {
-        let fontdb = fontdb.borrow();
-        rasterize_with_fontdb(svg, config, &fontdb)
-    })
+    let fontdb = FONT_DB.get_or_init(load_font_db);
+    rasterize_with_fontdb(svg, config, fontdb)
 }
 
 fn load_font_db() -> usvg::fontdb::Database {
     let mut fontdb = usvg::fontdb::Database::new();
-    // Prefer explicitly known font files so text rendering is reliable in containers.
     for path in [
         "/app/assets/fonts/Geist-Regular.otf",
         "./assets/fonts/Geist-Regular.otf",
@@ -29,7 +24,6 @@ fn load_font_db() -> usvg::fontdb::Database {
     ] {
         let _ = fontdb.load_font_file(path);
     }
-    fontdb.load_system_fonts();
     fontdb
 }
 

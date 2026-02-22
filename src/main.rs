@@ -1,3 +1,8 @@
+use mimalloc::MiMalloc;
+
+#[global_allocator]
+static GLOBAL: MiMalloc = MiMalloc;
+
 use axum::Router;
 use rideviz_rs::{config, routes, state};
 use tower_http::cors::{Any, CorsLayer};
