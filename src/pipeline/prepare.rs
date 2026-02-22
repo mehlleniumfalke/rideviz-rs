@@ -1,5 +1,5 @@
 use crate::error::PrepareError;
-use crate::types::activity::{ProcessedActivity, TrackPoint};
+use crate::types::activity::{Metrics, ProcessedActivity, TrackPoint};
 use crate::types::viz::{ColorByMetric, RenderOptions, RoutePoint, VizData};
 
 pub fn prepare(processed: &ProcessedActivity, options: &RenderOptions) -> Result<VizData, PrepareError> {
@@ -41,11 +41,39 @@ pub fn prepare(processed: &ProcessedActivity, options: &RenderOptions) -> Result
     let values = options
         .color_by
         .map(|metric| compute_route_metric_values(&processed.points, metric));
+    let telemetry = compute_route_telemetry(&processed.points, &processed.metrics);
 
     let points = normalized
         .into_iter()
         .enumerate()
         .map(|(idx, (x, y))| RoutePoint {
+            route_progress: telemetry
+                .get(idx)
+                .map(|sample| sample.route_progress)
+                .unwrap_or(0.0),
+            cumulative_distance_km: telemetry
+                .get(idx)
+                .map(|sample| sample.cumulative_distance_km)
+                .unwrap_or(0.0),
+            cumulative_elevation_gain_m: telemetry
+                .get(idx)
+                .map(|sample| sample.cumulative_elevation_gain_m)
+                .unwrap_or(0.0),
+            elapsed_seconds: telemetry.get(idx).and_then(|sample| sample.elapsed_seconds),
+            heart_rate: telemetry.get(idx).and_then(|sample| sample.heart_rate),
+            power: telemetry.get(idx).and_then(|sample| sample.power),
+            cumulative_avg_heart_rate: telemetry
+                .get(idx)
+                .and_then(|sample| sample.cumulative_avg_heart_rate),
+            cumulative_max_heart_rate: telemetry
+                .get(idx)
+                .and_then(|sample| sample.cumulative_max_heart_rate),
+            cumulative_avg_power: telemetry
+                .get(idx)
+                .and_then(|sample| sample.cumulative_avg_power),
+            cumulative_max_power: telemetry
+                .get(idx)
+                .and_then(|sample| sample.cumulative_max_power),
             x,
             y,
             value: values
@@ -195,6 +223,156 @@ fn has_speed_samples(points: &[TrackPoint]) -> bool {
         }
         false
     })
+}
+
+#[derive(Debug, Clone, Copy)]
+struct RouteTelemetrySample {
+    route_progress: f64,
+    cumulative_distance_km: f64,
+    cumulative_elevation_gain_m: f64,
+    elapsed_seconds: Option<f64>,
+    heart_rate: Option<f64>,
+    power: Option<f64>,
+    cumulative_avg_heart_rate: Option<f64>,
+    cumulative_max_heart_rate: Option<f64>,
+    cumulative_avg_power: Option<f64>,
+    cumulative_max_power: Option<f64>,
+}
+
+fn compute_route_telemetry(points: &[TrackPoint], metrics: &Metrics) -> Vec<RouteTelemetrySample> {
+    if points.is_empty() {
+        return Vec::new();
+    }
+
+    let mut cumulative_distance_raw = 0.0_f64;
+    let mut cumulative_gain_raw = 0.0_f64;
+    let mut elapsed_raw = 0.0_f64;
+    let mut hr_sum = 0_u64;
+    let mut hr_count = 0_u32;
+    let mut max_hr = 0_u16;
+    let mut power_sum = 0_u64;
+    let mut power_count = 0_u32;
+    let mut max_power = 0_u16;
+
+    let mut raw_distance = Vec::with_capacity(points.len());
+    let mut raw_gain = Vec::with_capacity(points.len());
+    let mut raw_elapsed = Vec::with_capacity(points.len());
+    let mut raw_hr_sum = Vec::with_capacity(points.len());
+    let mut raw_hr_count = Vec::with_capacity(points.len());
+    let mut raw_max_hr = Vec::with_capacity(points.len());
+    let mut raw_power_sum = Vec::with_capacity(points.len());
+    let mut raw_power_count = Vec::with_capacity(points.len());
+    let mut raw_max_power = Vec::with_capacity(points.len());
+
+    for idx in 0..points.len() {
+        if idx > 0 {
+            let prev = &points[idx - 1];
+            let curr = &points[idx];
+
+            cumulative_distance_raw += haversine_distance(prev.lat, prev.lon, curr.lat, curr.lon);
+
+            if let (Some(prev_ele), Some(curr_ele)) = (prev.elevation, curr.elevation) {
+                let gain = curr_ele - prev_ele;
+                if gain > 0.0 {
+                    cumulative_gain_raw += gain;
+                }
+            }
+
+            if let (Some(prev_time), Some(curr_time)) = (prev.time, curr.time) {
+                elapsed_raw += (curr_time - prev_time).num_seconds().max(0) as f64;
+            }
+        }
+
+        if let Some(hr) = points[idx].heart_rate {
+            hr_sum += hr as u64;
+            hr_count += 1;
+            max_hr = max_hr.max(hr);
+        }
+        if let Some(power) = points[idx].power {
+            power_sum += power as u64;
+            power_count += 1;
+            max_power = max_power.max(power);
+        }
+
+        raw_distance.push(cumulative_distance_raw);
+        raw_gain.push(cumulative_gain_raw);
+        raw_elapsed.push(elapsed_raw);
+        raw_hr_sum.push(hr_sum);
+        raw_hr_count.push(hr_count);
+        raw_max_hr.push(max_hr);
+        raw_power_sum.push(power_sum);
+        raw_power_count.push(power_count);
+        raw_max_power.push(max_power);
+    }
+
+    let total_distance_raw = raw_distance.last().copied().unwrap_or(0.0);
+    let total_gain_raw = raw_gain.last().copied().unwrap_or(0.0);
+    let total_elapsed_raw = raw_elapsed.last().copied().unwrap_or(0.0);
+    let total_points = points.len();
+
+    (0..points.len())
+        .map(|idx| {
+            let fallback_progress = if total_points <= 1 {
+                1.0
+            } else {
+                idx as f64 / (total_points - 1) as f64
+            };
+            let route_progress = if total_distance_raw > f64::EPSILON {
+                (raw_distance[idx] / total_distance_raw).clamp(0.0, 1.0)
+            } else {
+                fallback_progress
+            };
+
+            let gain_progress = if total_gain_raw > f64::EPSILON {
+                (raw_gain[idx] / total_gain_raw).clamp(0.0, 1.0)
+            } else {
+                route_progress
+            };
+
+            let elapsed_seconds = if metrics.duration_seconds > 0 {
+                let elapsed_progress = if total_elapsed_raw > f64::EPSILON {
+                    (raw_elapsed[idx] / total_elapsed_raw).clamp(0.0, 1.0)
+                } else {
+                    route_progress
+                };
+                Some(elapsed_progress * metrics.duration_seconds as f64)
+            } else {
+                None
+            };
+
+            let cumulative_avg_heart_rate = if raw_hr_count[idx] > 0 {
+                Some(raw_hr_sum[idx] as f64 / raw_hr_count[idx] as f64)
+            } else {
+                None
+            };
+            let cumulative_avg_power = if raw_power_count[idx] > 0 {
+                Some(raw_power_sum[idx] as f64 / raw_power_count[idx] as f64)
+            } else {
+                None
+            };
+
+            RouteTelemetrySample {
+                route_progress,
+                cumulative_distance_km: route_progress * metrics.distance_km,
+                cumulative_elevation_gain_m: gain_progress * metrics.elevation_gain_m,
+                elapsed_seconds,
+                heart_rate: points[idx].heart_rate.map(|value| value as f64),
+                power: points[idx].power.map(|value| value as f64),
+                cumulative_avg_heart_rate,
+                cumulative_max_heart_rate: if raw_max_hr[idx] > 0 {
+                    Some(raw_max_hr[idx] as f64)
+                } else {
+                    None
+                },
+                cumulative_avg_power,
+                cumulative_max_power: if raw_max_power[idx] > 0 {
+                    Some(raw_max_power[idx] as f64)
+                } else {
+                    None
+                },
+            }
+        })
+        .collect()
 }
 
 fn haversine_distance(lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> f64 {

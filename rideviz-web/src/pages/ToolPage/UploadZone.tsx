@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 interface UploadZoneProps {
   onFileSelect: (file: File) => void;
@@ -8,8 +8,17 @@ interface UploadZoneProps {
 
 export default function UploadZone({ onFileSelect, isUploading, error }: UploadZoneProps) {
   const [dragActive, setDragActive] = useState(false);
+  const [isTouchDevice, setIsTouchDevice] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const zoneId = 'file-upload-zone';
+
+  useEffect(() => {
+    const media = window.matchMedia('(pointer: coarse)');
+    const sync = () => setIsTouchDevice(media.matches);
+    sync();
+    media.addEventListener('change', sync);
+    return () => media.removeEventListener('change', sync);
+  }, []);
 
   const handleDrag = (e: React.DragEvent) => {
     e.preventDefault();
@@ -61,6 +70,7 @@ export default function UploadZone({ onFileSelect, isUploading, error }: UploadZ
       style={{
         border: dragActive ? '2px solid var(--black)' : '1px dashed var(--black)',
         padding: 'var(--space-8)',
+        minHeight: 180,
         textAlign: 'center',
         cursor: 'pointer',
         background: dragActive ? '#f5f5f5' : 'var(--white)',
@@ -76,14 +86,29 @@ export default function UploadZone({ onFileSelect, isUploading, error }: UploadZ
       />
 
       {isUploading ? (
-        <div>Uploading...</div>
+        <div style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--space-2)' }}>
+          <span className="spinner" aria-hidden />
+          <span>Uploading file...</span>
+        </div>
       ) : (
         <>
+          <svg
+            viewBox="0 0 24 24"
+            width="36"
+            height="36"
+            aria-hidden
+            style={{ opacity: 0.6, marginBottom: 'var(--space-3)' }}
+          >
+            <path
+              d="M12 3 8.2 6.8a1 1 0 0 0 1.4 1.4l1.4-1.4V15a1 1 0 1 0 2 0V6.8l1.4 1.4a1 1 0 0 0 1.4-1.4L12 3Zm-7 13a1 1 0 0 0-1 1v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2a1 1 0 1 0-2 0v2H6v-2a1 1 0 0 0-1-1Z"
+              fill="currentColor"
+            />
+          </svg>
           <div style={{ fontSize: 'var(--text-lg)', marginBottom: 'var(--space-2)' }}>
-            Drop GPX or FIT file
+            {isTouchDevice ? 'Select GPX or FIT file' : 'Drop GPX or FIT file'}
           </div>
           <div id={zoneId} style={{ fontSize: 'var(--text-sm)', color: 'var(--gray)' }}>
-            or click to browse
+            {isTouchDevice ? 'Tap to choose from files' : 'or click to browse'}
           </div>
         </>
       )}

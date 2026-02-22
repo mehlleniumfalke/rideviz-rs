@@ -1,4 +1,4 @@
-import type { RefObject } from 'react';
+import type { ReactNode, RefObject } from 'react';
 import type { BackgroundColor } from '../../types/api';
 
 interface PreviewPanelProps {
@@ -16,6 +16,7 @@ interface PreviewPanelProps {
   isAnimated: boolean;
   canAnimatedExport: boolean;
   shareStatus: string | null;
+  emptyState?: ReactNode;
 }
 
 export default function PreviewPanel({
@@ -33,6 +34,7 @@ export default function PreviewPanel({
   isAnimated,
   canAnimatedExport,
   shareStatus,
+  emptyState,
 }: PreviewPanelProps) {
   const previewRatio = previewWidth / previewHeight;
   const previewAspectRatio = `${previewWidth} / ${previewHeight}`;
@@ -67,13 +69,16 @@ export default function PreviewPanel({
         }}
       >
         {!fileId ? (
-          <div style={{ textAlign: 'center', color: 'var(--gray)' }}>
-            <div style={{ fontSize: '48px', marginBottom: 'var(--space-4)', opacity: 0.3 }}>↑</div>
-            <div>Upload a file to preview</div>
-          </div>
+          emptyState ?? (
+            <div style={{ textAlign: 'center', color: 'var(--gray)' }}>
+              <div style={{ fontSize: '48px', marginBottom: 'var(--space-4)', opacity: 0.3 }}>↑</div>
+              <div>Upload a file to preview</div>
+            </div>
+          )
         ) : isLoading ? (
-          <div style={{ color: 'var(--gray)' }} aria-live="polite">
-            Loading...
+          <div style={{ color: 'var(--gray)', display: 'inline-flex', alignItems: 'center', gap: 'var(--space-2)' }} aria-live="polite">
+            <span className="spinner" aria-hidden />
+            <span>Rendering preview...</span>
           </div>
         ) : error ? (
           <div style={{ textAlign: 'center', color: '#c00' }} aria-live="polite">
@@ -104,7 +109,7 @@ export default function PreviewPanel({
 
       {/* Action buttons */}
       {fileId && !isLoading && !error && (
-        <div style={{ padding: 'var(--space-4)', borderTop: 'var(--border)' }}>
+        <div className="preview-actions" style={{ padding: 'var(--space-4)', borderTop: 'var(--border)' }}>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-2)' }}>
             <button
               onClick={onDownload}
@@ -118,6 +123,7 @@ export default function PreviewPanel({
               {canShare ? 'Share ↗' : 'Share Link ↗'}
             </button>
           </div>
+          {isExporting && <div className="progress-indeterminate" style={{ marginTop: 'var(--space-2)' }} aria-hidden />}
           {shareStatus && <div style={{ marginTop: 'var(--space-2)', fontSize: 'var(--text-xs)', color: 'var(--gray)' }} aria-live="polite">{shareStatus}</div>}
         </div>
       )}

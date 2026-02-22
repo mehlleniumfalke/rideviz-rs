@@ -13,6 +13,46 @@
   background: var(--white);
 }
 
+.box-inverted {
+  border: var(--border);
+  padding: var(--space-4);
+  background: var(--black);
+  color: var(--white);
+}
+
+.box-inverted .label {
+  color: var(--white);
+}
+
+.box-inverted button {
+  background: transparent;
+  color: var(--white);
+  border: 1px solid #444;
+}
+
+.box-inverted button:hover:not(:disabled) {
+  background: var(--white);
+  color: var(--black);
+  border-color: var(--white);
+}
+
+.box-inverted input[type="text"],
+.box-inverted input[type="email"] {
+  background: #111;
+  color: var(--white);
+  border: 1px solid #444;
+  padding: var(--space-2);
+  width: 100%;
+  font-family: var(--font-body);
+  font-size: var(--text-sm);
+}
+
+.box-inverted input[type="text"]:focus-visible,
+.box-inverted input[type="email"]:focus-visible {
+  outline: 2px solid var(--white);
+  outline-offset: 2px;
+}
+
 .visually-hidden {
   position: absolute;
   width: 1px;

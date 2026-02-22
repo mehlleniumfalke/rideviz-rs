@@ -10,7 +10,7 @@ import {
   verifyLicense,
   uploadFile,
 } from '../../api/client';
-import { buildAnimationProgress } from '../../engine/animate';
+import { mapLinearProgressToRoute } from '../../engine/animate';
 import { renderFrame } from '../../engine/render';
 import { addGenerationHistoryEntry } from '../../storage/history';
 import type { AvailableData, BackgroundColor, ColorByMetric, ExportPreset, GradientName, Metrics, StatKey, UploadResponse, VideoExportRequest, VisualizeRequest, VizData } from '../../types/api';
@@ -53,9 +53,11 @@ const STORAGE_KEY_FPS = 'rideviz_fps';
 const STORAGE_KEY_LICENSE = 'rideviz_license_token';
 const FIXED_STROKE_WIDTH = 3;
 const FIXED_PADDING = 40;
+type ControlSectionKey = 'appearance' | 'export' | 'pro';
 
 const getStoredDuration = () => Number(localStorage.getItem(STORAGE_KEY_DURATION) ?? 9);
 const getStoredFps = () => Number(localStorage.getItem(STORAGE_KEY_FPS) ?? 30);
+const getIsCompactViewport = () => (typeof window !== 'undefined' ? window.matchMedia('(max-width: 1024px)').matches : false);
 
 export default function ToolPageImpl({ onNavigateHome }: ToolPageProps) {
   const [fileId, setFileId] = useState<string | null>(null);
@@ -75,10 +77,15 @@ export default function ToolPageImpl({ onNavigateHome }: ToolPageProps) {
     padding: FIXED_PADDING, smoothing: 30, glow: false, background: 'white', animated: false,
     duration: getStoredDuration(), fps: getStoredFps(), stats: [],
   });
+  const [isCompactLayout, setIsCompactLayout] = useState(getIsCompactViewport);
+  const [collapsedSections, setCollapsedSections] = useState<Record<ControlSectionKey, boolean>>({
+    appearance: false,
+    export: true,
+    pro: true,
+  });
 
   const previewCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
-  const statsEntries = useMemo(() => buildStatsEntries(config.stats, metrics, availableData), [config.stats, metrics, availableData]);
   const selectedFormat = useMemo(() => getExportFormat(config.exportPreset), [config.exportPreset]);
 
   const handleImportedActivity = (response: UploadResponse) => {
@@ -135,6 +142,14 @@ export default function ToolPageImpl({ onNavigateHome }: ToolPageProps) {
   }, [config.gradient, config.colorBy]);
 
   useEffect(() => {
+    const media = window.matchMedia('(max-width: 1024px)');
+    const syncLayout = () => setIsCompactLayout(media.matches);
+    syncLayout();
+    media.addEventListener('change', syncLayout);
+    return () => media.removeEventListener('change', syncLayout);
+  }, []);
+
+  useEffect(() => {
     const canvas = previewCanvasRef.current;
     if (!canvas || !routeData || !fileId) return;
     canvas.width = selectedFormat.width;
@@ -143,7 +158,14 @@ export default function ToolPageImpl({ onNavigateHome }: ToolPageProps) {
     if (!ctx) return;
     let raf = 0;
     const draw = (progress: number) => {
-      renderFrame(ctx, { data: routeData, stats: statsEntries, options: { width: selectedFormat.width, height: selectedFormat.height, padding: FIXED_PADDING, strokeWidth: FIXED_STROKE_WIDTH, smoothing: config.smoothing, glow: config.glow, background: config.background, gradient: config.gradient, progress } });
+      const stats = buildStatsEntries(
+        config.stats,
+        metrics,
+        availableData,
+        routeData,
+        progress,
+      );
+      renderFrame(ctx, { data: routeData, stats, options: { width: selectedFormat.width, height: selectedFormat.height, padding: FIXED_PADDING, strokeWidth: FIXED_STROKE_WIDTH, smoothing: config.smoothing, glow: config.glow, background: config.background, gradient: config.gradient, progress } });
       if (!hasProAccess && !config.animated) {
         drawWatermark(ctx, selectedFormat.width, selectedFormat.height);
       }
@@ -156,12 +178,12 @@ export default function ToolPageImpl({ onNavigateHome }: ToolPageProps) {
     const durationMs = Math.max(1000, config.duration * 1000);
     const loop = (now: number) => {
       const linear = ((now - start) % durationMs) / durationMs;
-      draw(buildAnimationProgress(Math.round(linear * 1000), 1001));
+      draw(mapLinearProgressToRoute(routeData.points, linear));
       raf = window.requestAnimationFrame(loop);
     };
     raf = window.requestAnimationFrame(loop);
     return () => window.cancelAnimationFrame(raf);
-  }, [fileId, routeData, config, statsEntries, selectedFormat, hasProAccess]);
+  }, [fileId, routeData, config, selectedFormat, hasProAccess, metrics, availableData]);
 
   useEffect(() => {
     if (licenseToken) localStorage.setItem(STORAGE_KEY_LICENSE, licenseToken);
@@ -467,20 +489,69 @@ export default function ToolPageImpl({ onNavigateHome }: ToolPageProps) {
     setPreviewError(null);
   };
 
+  const toggleSection = (section: ControlSectionKey) => {
+    setCollapsedSections((prev) => ({ ...prev, [section]: !prev[section] }));
+  };
+
+  const canShare = typeof navigator !== 'undefined' && typeof navigator.share === 'function';
+  const showActionButtons = Boolean(fileId) && !isLoadingPreview && !previewError;
+  const downloadDisabled = isExporting || (config.animated && !hasProAccess);
+  const appearanceControls = (
+    <>
+      <GradientPicker selectedGradient={config.gradient} onChange={(gradient) => setConfig({ ...config, gradient })} />
+      {availableData && <ColorByPicker value={config.colorBy} gradient={config.gradient} availableData={availableData} onChange={(colorBy) => setConfig({ ...config, colorBy })} />}
+      <BackgroundPicker value={config.background} onChange={(background) => setConfig({ ...config, background })} />
+      {availableData && metrics && <StatsPicker value={config.stats} availableData={availableData} metrics={metrics} onChange={(stats) => setConfig({ ...config, stats })} />}
+    </>
+  );
+  const exportControls = (
+    <>
+      <ExportFormatPicker value={config.exportPreset} onChange={(exportPreset) => setConfig({ ...config, exportPreset })} />
+      {config.animated && <DurationControl duration={config.duration} fps={config.fps} width={selectedFormat.width} height={selectedFormat.height} onChange={(updates) => setConfig({ ...config, ...updates })} />}
+      <AdvancedPanel smoothing={config.smoothing} glow={config.glow} animated={config.animated} onChange={(updates) => setConfig({ ...config, ...updates })} />
+    </>
+  );
+  const proControl = (
+    <UpgradePanel
+      onLicenseToken={setLicenseToken}
+      currentToken={licenseToken}
+      hasProAccess={hasProAccess}
+    />
+  );
+
   return (
-    <div style={{ minHeight: '100vh', padding: 'var(--space-4)' }}>
-      <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-4)', paddingBottom: 'var(--space-4)', borderBottom: 'var(--border)' }}>
-        <h1 style={{ fontSize: 'var(--text-xl)', fontWeight: 600 }}>RideViz</h1>
+    <div className={`tool-page${showActionButtons ? ' tool-page--with-actions' : ''}`} style={{ minHeight: '100vh', padding: 'var(--space-4)' }}>
+      <header style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', marginBottom: 'var(--space-4)', paddingBottom: 'var(--space-4)', borderBottom: 'var(--border)' }}>
         <button onClick={onNavigateHome} aria-label="Back to home">← Back</button>
+        <h1 style={{ fontSize: 'var(--text-xl)', fontWeight: 600 }}>RideViz</h1>
       </header>
-      <div className="tool-layout" style={{ display: 'grid', gridTemplateColumns: '1fr 320px', gap: 'var(--space-4)', minHeight: 'calc(100vh - 100px)' }}>
-        <PreviewPanel canvasRef={previewCanvasRef} previewWidth={selectedFormat.width} previewHeight={selectedFormat.height} isLoading={isLoadingPreview} error={previewError} isExporting={isExporting} onDownload={handleDownload} onShare={handleShare} fileId={fileId} background={config.background} canShare={Boolean(navigator.share)} isAnimated={config.animated} canAnimatedExport={hasProAccess} shareStatus={shareStatus} />
+      <div className={`tool-layout${fileId ? ' tool-layout--loaded' : ''}`} style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 320px', gap: 'var(--space-4)', minHeight: 'calc(100vh - 100px)' }}>
+        <PreviewPanel
+          canvasRef={previewCanvasRef}
+          previewWidth={selectedFormat.width}
+          previewHeight={selectedFormat.height}
+          isLoading={isLoadingPreview}
+          error={previewError}
+          isExporting={isExporting}
+          onDownload={handleDownload}
+          onShare={handleShare}
+          fileId={fileId}
+          background={config.background}
+          canShare={canShare}
+          isAnimated={config.animated}
+          canAnimatedExport={hasProAccess}
+          shareStatus={shareStatus}
+          emptyState={<UploadZone onFileSelect={handleFileSelect} isUploading={isUploading} error={uploadError || undefined} />}
+        />
         <aside className="tool-controls" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
           {!fileId ? (
             <>
-              <UploadZone onFileSelect={handleFileSelect} isUploading={isUploading} error={uploadError || undefined} />
-              <StravaConnect onImported={handleImportedActivity} enabled={hasProAccess} />
-              <UpgradePanel onLicenseToken={setLicenseToken} currentToken={licenseToken} />
+              <StravaConnect
+                onImported={handleImportedActivity}
+                enabled={hasProAccess}
+                licenseToken={licenseToken}
+              />
+              {proControl}
             </>
           ) : (
             <div className="box" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -489,20 +560,84 @@ export default function ToolPageImpl({ onNavigateHome }: ToolPageProps) {
             </div>
           )}
           {fileId && (
-            <>
-              <GradientPicker selectedGradient={config.gradient} onChange={(gradient) => setConfig({ ...config, gradient })} />
-              {availableData && <ColorByPicker value={config.colorBy} gradient={config.gradient} availableData={availableData} onChange={(colorBy) => setConfig({ ...config, colorBy })} />}
-              <BackgroundPicker value={config.background} onChange={(background) => setConfig({ ...config, background })} />
-              {availableData && metrics && <StatsPicker value={config.stats} availableData={availableData} metrics={metrics} onChange={(stats) => setConfig({ ...config, stats })} />}
-              <ExportFormatPicker value={config.exportPreset} onChange={(exportPreset) => setConfig({ ...config, exportPreset })} />
-              {config.animated && <DurationControl duration={config.duration} fps={config.fps} width={selectedFormat.width} height={selectedFormat.height} onChange={(updates) => setConfig({ ...config, ...updates })} />}
-              <AdvancedPanel smoothing={config.smoothing} glow={config.glow} animated={config.animated} onChange={(updates) => setConfig({ ...config, ...updates })} />
-              <UpgradePanel onLicenseToken={setLicenseToken} currentToken={licenseToken} />
-            </>
+            isCompactLayout ? (
+              <>
+                <div className="box">
+                  <button type="button" onClick={() => toggleSection('appearance')} aria-expanded={!collapsedSections.appearance} style={{ all: 'unset', display: 'flex', width: '100%', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer' }}>
+                    <span className="label" style={{ margin: 0 }}>Appearance</span>
+                    <span aria-hidden>{collapsedSections.appearance ? '▸' : '▾'}</span>
+                  </button>
+                </div>
+                {!collapsedSections.appearance && appearanceControls}
+                <div className="box">
+                  <button type="button" onClick={() => toggleSection('export')} aria-expanded={!collapsedSections.export} style={{ all: 'unset', display: 'flex', width: '100%', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer' }}>
+                    <span className="label" style={{ margin: 0 }}>Export</span>
+                    <span aria-hidden>{collapsedSections.export ? '▸' : '▾'}</span>
+                  </button>
+                </div>
+                {!collapsedSections.export && exportControls}
+                <div className="box">
+                  <button type="button" onClick={() => toggleSection('pro')} aria-expanded={!collapsedSections.pro} style={{ all: 'unset', display: 'flex', width: '100%', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer' }}>
+                    <span className="label" style={{ margin: 0 }}>Pro</span>
+                    <span aria-hidden>{collapsedSections.pro ? '▸' : '▾'}</span>
+                  </button>
+                </div>
+                {!collapsedSections.pro && proControl}
+              </>
+            ) : (
+              <>
+                {appearanceControls}
+                {exportControls}
+                {proControl}
+              </>
+            )
           )}
         </aside>
       </div>
-      <style>{`@media (max-width: 768px) { .tool-layout { grid-template-columns: 1fr !important; min-height: unset !important; } .tool-controls { order: 1; } .preview-panel { order: 2; min-height: 280px !important; } }`}</style>
+      {showActionButtons && (
+        <div className="mobile-action-bar" role="region" aria-label="Export actions">
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-2)' }}>
+            <button
+              onClick={handleDownload}
+              aria-label="Download generated export"
+              disabled={downloadDisabled}
+              style={{ width: '100%' }}
+            >
+              {isExporting ? 'Preparing...' : config.animated ? (hasProAccess ? 'Export MP4 ↓' : 'Upgrade for MP4') : 'Download PNG ↓'}
+            </button>
+            <button onClick={handleShare} aria-label="Share generated export" disabled={isExporting} style={{ width: '100%' }}>
+              {canShare ? 'Share ↗' : 'Share Link ↗'}
+            </button>
+          </div>
+          {isExporting && <div className="progress-indeterminate" style={{ marginTop: 'var(--space-2)' }} aria-hidden />}
+          {shareStatus && <div style={{ marginTop: 'var(--space-2)', fontSize: 'var(--text-xs)', color: 'var(--gray)' }} aria-live="polite">{shareStatus}</div>}
+        </div>
+      )}
+      <style>{`
+        .mobile-action-bar { display: none; }
+        @media (max-width: 1024px) {
+          .tool-layout { grid-template-columns: 1fr !important; min-height: unset !important; }
+          .tool-controls { order: 2; }
+          .preview-panel { order: 1; min-height: 320px !important; }
+          .tool-layout--loaded .preview-panel { order: 1; }
+          .tool-layout--loaded .tool-controls { order: 2; }
+          .preview-actions { display: none; }
+          .mobile-action-bar {
+            display: block;
+            position: fixed;
+            left: var(--space-4);
+            right: var(--space-4);
+            bottom: var(--space-4);
+            z-index: 30;
+            border: var(--border);
+            background: var(--white);
+            padding: var(--space-3);
+          }
+          .tool-page--with-actions {
+            padding-bottom: 110px !important;
+          }
+        }
+      `}</style>
     </div>
   );
 }

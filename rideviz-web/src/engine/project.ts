@@ -36,7 +36,14 @@ export function prepareFramePoints(data: VizData, options: RenderFrameOptions): 
     const groundY = -x * sin + y * cos;
     const normElev = Math.pow(((point.elevation ?? minElev) - minElev) / elevRange, ELEVATION_GAMMA);
     const topY = groundY - normElev * extrusionHeight;
-    return { groundX, groundY, topX: groundX, topY, value: point.value };
+    return {
+      groundX,
+      groundY,
+      topX: groundX,
+      topY,
+      value: point.value,
+      routeProgress: point.route_progress,
+    };
   });
 
   const fitted = fitToViewport(projected, options);
@@ -81,30 +88,23 @@ function fitToViewport(points: PreparedPoint[], options: RenderFrameOptions): Pr
 
 function revealPoints(points: PreparedPoint[], progress: number): PreparedPoint[] {
   if (points.length <= 1 || progress >= 1) return points;
+  if (progress <= 0) return [points[0]];
 
-  const segmentLengths = points.slice(1).map((point, index) => {
-    const prev = points[index];
-    return Math.hypot(point.topX - prev.topX, point.topY - prev.topY);
-  });
-  const totalLength = segmentLengths.reduce((sum, length) => sum + length, 0);
-  if (totalLength <= Number.EPSILON) return [points[0]];
-
-  const targetLength = totalLength * progress;
-  let traveled = 0;
   const out: PreparedPoint[] = [points[0]];
-
-  for (let i = 0; i < segmentLengths.length; i += 1) {
-    const segmentLength = segmentLengths[i];
-    if (segmentLength <= Number.EPSILON) continue;
-    const nextTraveled = traveled + segmentLength;
-    if (nextTraveled < targetLength) {
-      out.push(points[i + 1]);
-      traveled = nextTraveled;
+  for (let i = 0; i < points.length - 1; i += 1) {
+    const current = points[i];
+    const next = points[i + 1];
+    if (next.routeProgress <= current.routeProgress) continue;
+    if (next.routeProgress < progress) {
+      out.push(next);
       continue;
     }
-
-    const t = clamp((targetLength - traveled) / segmentLength, 0, 1);
-    out.push(lerpPoint(points[i], points[i + 1], t));
+    const t = clamp(
+      (progress - current.routeProgress) / (next.routeProgress - current.routeProgress),
+      0,
+      1,
+    );
+    out.push(lerpPoint(current, next, t));
     return out;
   }
 
@@ -122,6 +122,7 @@ function lerpPoint(a: PreparedPoint, b: PreparedPoint, t: number): PreparedPoint
       a.value == null && b.value == null
         ? null
         : lerp(a.value ?? b.value ?? 0, b.value ?? a.value ?? 0),
+    routeProgress: lerp(a.routeProgress, b.routeProgress),
   };
 }
 

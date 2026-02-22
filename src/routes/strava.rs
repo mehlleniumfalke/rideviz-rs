@@ -1,9 +1,9 @@
 use std::time::{Duration, Instant};
 
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::HeaderMap,
-    routing::get,
+    routing::{get, post},
     Json, Router,
 };
 use chrono::{TimeZone, Utc};
@@ -13,6 +13,7 @@ use uuid::Uuid;
 
 use crate::{
     error::AppError,
+    license::verify_license_token,
     pipeline::process,
     state::{AppState, StravaSession},
     types::activity::{AvailableData, Metrics, ParsedActivity, TrackPoint},
@@ -20,7 +21,7 @@ use crate::{
 
 pub fn router() -> Router<AppState> {
     Router::new()
-        .route("/api/strava/auth", get(strava_auth))
+        .route("/api/strava/auth", post(strava_auth))
         .route("/api/strava/callback", get(strava_callback))
         .route("/api/strava/activities", get(list_activities))
         .route("/api/strava/activity/:activity_id", get(import_activity))
@@ -36,6 +37,12 @@ struct StravaAuthResponse {
 struct StravaCallbackQuery {
     code: String,
     state: String,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct StravaAuthRequest {
+    client_id: Option<String>,
+    client_secret: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -61,12 +68,40 @@ struct UploadLikeResponse {
     available_data: AvailableData,
 }
 
-async fn strava_auth(State(state): State<AppState>) -> Result<Json<StravaAuthResponse>, AppError> {
+async fn strava_auth(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(payload): Json<StravaAuthRequest>,
+) -> Result<Json<StravaAuthResponse>, AppError> {
+    require_pro_license(&state, &headers)?;
+
     let config = state.config();
-    let client_id = config
-        .strava_client_id
-        .as_ref()
-        .ok_or_else(|| AppError::BadRequest("STRAVA_CLIENT_ID is not configured".to_string()))?;
+    let provided_client_id = payload
+        .client_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    let provided_client_secret = payload
+        .client_secret
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    if provided_client_id.is_some() != provided_client_secret.is_some() {
+        return Err(AppError::BadRequest(
+            "Provide both Strava client_id and client_secret, or leave both empty".to_string(),
+        ));
+    }
+    let client_id = if let Some(custom_client_id) = provided_client_id.as_ref() {
+        custom_client_id.clone()
+    } else {
+        config
+            .strava_client_id
+            .as_ref()
+            .ok_or_else(|| AppError::BadRequest("STRAVA_CLIENT_ID is not configured".to_string()))?
+            .to_string()
+    };
     let redirect_uri = config.strava_redirect_uri.as_ref().ok_or_else(|| {
         AppError::BadRequest("STRAVA_REDIRECT_URI is not configured".to_string())
     })?;
@@ -78,6 +113,8 @@ async fn strava_auth(State(state): State<AppState>) -> Result<Json<StravaAuthRes
             access_token: String::new(),
             athlete_id: None,
             expires_at: Instant::now() + Duration::from_secs(10 * 60),
+            oauth_client_id: provided_client_id,
+            oauth_client_secret: provided_client_secret,
         },
     );
 
@@ -94,27 +131,35 @@ async fn strava_auth(State(state): State<AppState>) -> Result<Json<StravaAuthRes
 
 async fn strava_callback(
     State(state): State<AppState>,
+    headers: HeaderMap,
     axum::extract::Query(query): axum::extract::Query<StravaCallbackQuery>,
 ) -> Result<Json<StravaCallbackResponse>, AppError> {
-    if state.get_strava_session(&query.state).is_none() {
+    require_pro_license(&state, &headers)?;
+    let oauth_session = state
+        .get_strava_session(&query.state)
+        .ok_or_else(|| AppError::Unauthorized("Invalid OAuth state".to_string()))?;
+    if !oauth_session.access_token.is_empty() {
         return Err(AppError::Unauthorized("Invalid OAuth state".to_string()));
     }
 
     let config = state.config();
-    let client_id = config
-        .strava_client_id
-        .as_ref()
+    let client_id = oauth_session
+        .oauth_client_id
+        .as_deref()
+        .or(config.strava_client_id.as_deref())
         .ok_or_else(|| AppError::BadRequest("STRAVA_CLIENT_ID is not configured".to_string()))?;
-    let client_secret = config.strava_client_secret.as_ref().ok_or_else(|| {
-        AppError::BadRequest("STRAVA_CLIENT_SECRET is not configured".to_string())
-    })?;
+    let client_secret = oauth_session
+        .oauth_client_secret
+        .as_deref()
+        .or(config.strava_client_secret.as_deref())
+        .ok_or_else(|| AppError::BadRequest("STRAVA_CLIENT_SECRET is not configured".to_string()))?;
 
     let client = reqwest::Client::new();
     let response = client
         .post("https://www.strava.com/oauth/token")
         .form(&[
-            ("client_id", client_id.as_str()),
-            ("client_secret", client_secret.as_str()),
+            ("client_id", client_id),
+            ("client_secret", client_secret),
             ("code", query.code.as_str()),
             ("grant_type", "authorization_code"),
         ])
@@ -163,6 +208,8 @@ async fn strava_callback(
             access_token: access_token.to_string(),
             athlete_id,
             expires_at,
+            oauth_client_id: None,
+            oauth_client_secret: None,
         },
     );
 
@@ -173,9 +220,15 @@ async fn strava_callback(
     }))
 }
 
+#[derive(Deserialize)]
+struct ListActivitiesQuery {
+    page: Option<u32>,
+}
+
 async fn list_activities(
     State(state): State<AppState>,
     headers: HeaderMap,
+    Query(params): Query<ListActivitiesQuery>,
 ) -> Result<Json<Vec<StravaActivitySummary>>, AppError> {
     let access_token = bearer_token(&headers)
         .ok_or_else(|| AppError::Unauthorized("Missing Strava Bearer token".to_string()))?;
@@ -183,9 +236,15 @@ async fn list_activities(
         .get_strava_session(&access_token)
         .ok_or_else(|| AppError::Unauthorized("Expired or unknown Strava session".to_string()))?;
 
+    let page = params.page.unwrap_or(1);
+    let url = format!(
+        "https://www.strava.com/api/v3/athlete/activities?per_page=100&page={}",
+        page
+    );
+
     let client = reqwest::Client::new();
     let response = client
-        .get("https://www.strava.com/api/v3/athlete/activities?per_page=20")
+        .get(&url)
         .bearer_auth(&session.access_token)
         .send()
         .await
@@ -351,4 +410,17 @@ fn bearer_token(headers: &HeaderMap) -> Option<String> {
     let value = headers.get("authorization")?;
     let raw = value.to_str().ok()?;
     raw.strip_prefix("Bearer ").map(|token| token.trim().to_string())
+}
+
+fn require_pro_license(state: &AppState, headers: &HeaderMap) -> Result<(), AppError> {
+    let token = bearer_token(headers)
+        .ok_or_else(|| AppError::Unauthorized("Missing license bearer token".to_string()))?;
+    let claims = verify_license_token(&token, &state.config().jwt_secret)
+        .map_err(|_| AppError::Unauthorized("Invalid license token".to_string()))?;
+    if !claims.pro {
+        return Err(AppError::Unauthorized(
+            "Pro license required for Strava import".to_string(),
+        ));
+    }
+    Ok(())
 }

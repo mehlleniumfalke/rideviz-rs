@@ -7,12 +7,6 @@ services:
       dockerfile: Dockerfile
     ports:
       - "3000:3000"
-    environment:
-      - RUST_LOG=info
-      - PORT=3000
-      - MAX_FILE_SIZE_MB=25
-      - CACHE_TTL_SECONDS=3600
-      - STRAVA_CLIENT_ID=101266
-      - STRAVA_CLIENT_SECRET=3dd0338f18bdde675b560af664861e230e0074e7
-      - STRAVA_REDIRECT_URI=http://lamonica-semielliptic-brianne.ngrok-free.dev/app
+    env_file:
+      - .env
     restart: unless-stopped

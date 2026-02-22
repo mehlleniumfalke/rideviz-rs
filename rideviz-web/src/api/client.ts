@@ -5,6 +5,7 @@ import type {
   RouteDataResponse,
   StravaActivitySummary,
   StravaAuthResponse,
+  StravaByoCredentials,
   StravaCallbackResponse,
   UploadResponse,
   VideoExportRequest,
@@ -157,8 +158,18 @@ export async function completeCheckoutSession(sessionId: string): Promise<Licens
   return (await response.json()) as LicenseResponse;
 }
 
-export async function getStravaAuthUrl(): Promise<StravaAuthResponse> {
-  const response = await fetch(buildUrl('/api/strava/auth'));
+export async function getStravaAuthUrl(
+  authToken: string,
+  credentials?: StravaByoCredentials,
+): Promise<StravaAuthResponse> {
+  const response = await fetch(buildUrl('/api/strava/auth'), {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${authToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(credentials ?? {}),
+  });
   if (!response.ok) {
     throw new Error(await readError(response));
   }
@@ -168,9 +179,15 @@ export async function getStravaAuthUrl(): Promise<StravaAuthResponse> {
 export async function completeStravaAuth(
   code: string,
   state: string,
+  authToken: string,
 ): Promise<StravaCallbackResponse> {
   const response = await fetch(
     buildUrl(`/api/strava/callback?code=${encodeURIComponent(code)}&state=${encodeURIComponent(state)}`),
+    {
+      headers: {
+        Authorization: `Bearer ${authToken}`,
+      },
+    },
   );
   if (!response.ok) {
     throw new Error(await readError(response));
@@ -178,8 +195,8 @@ export async function completeStravaAuth(
   return (await response.json()) as StravaCallbackResponse;
 }
 
-export async function listStravaActivities(authToken: string): Promise<StravaActivitySummary[]> {
-  const response = await fetch(buildUrl('/api/strava/activities'), {
+export async function listStravaActivities(authToken: string, page = 1): Promise<StravaActivitySummary[]> {
+  const response = await fetch(buildUrl(`/api/strava/activities?page=${page}`), {
     headers: { Authorization: `Bearer ${authToken}` },
   });
   if (!response.ok) {

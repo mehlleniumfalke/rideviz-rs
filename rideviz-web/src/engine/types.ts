@@ -30,4 +30,5 @@ export interface PreparedPoint {
   topX: number;
   topY: number;
   value: number | null;
+  routeProgress: number;
 }

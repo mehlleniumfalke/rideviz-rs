@@ -4,13 +4,15 @@ import { createCheckoutSession, verifyLicense } from '../../api/client';
 interface UpgradePanelProps {
   onLicenseToken: (token: string | null) => void;
   currentToken: string | null;
+  hasProAccess: boolean;
 }
 
-export default function UpgradePanel({ onLicenseToken, currentToken }: UpgradePanelProps) {
+export default function UpgradePanel({ onLicenseToken, currentToken, hasProAccess }: UpgradePanelProps) {
   const [email, setEmail] = useState('');
   const [tokenInput, setTokenInput] = useState(currentToken ?? '');
   const [status, setStatus] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [showLicenseControls, setShowLicenseControls] = useState(false);
 
   useEffect(() => {
     setTokenInput(currentToken ?? '');
@@ -35,7 +37,7 @@ export default function UpgradePanel({ onLicenseToken, currentToken }: UpgradePa
   };
 
   const handleVerify = async () => {
-    const token = (currentToken ?? tokenInput).trim();
+    const token = tokenInput.trim() || currentToken?.trim() || '';
     if (!token) {
       setStatus('No license token set.');
       return;
@@ -68,39 +70,61 @@ export default function UpgradePanel({ onLicenseToken, currentToken }: UpgradePa
   };
 
   return (
-    <div className="box">
+    <div className="box-inverted">
       <div className="label">Upgrade to Pro</div>
       <div style={{ display: 'grid', gap: 'var(--space-2)' }}>
-        <input
-          type="email"
-          placeholder="email for checkout"
-          value={email}
-          onChange={(event) => setEmail(event.target.value)}
-          style={{ border: 'var(--border)', padding: 'var(--space-2)' }}
-        />
-        <input
-          type="text"
-          placeholder="paste license token"
-          value={tokenInput}
-          onChange={(event) => setTokenInput(event.target.value)}
-          style={{ border: 'var(--border)', padding: 'var(--space-2)' }}
-        />
-        <button onClick={handleCheckout} disabled={loading}>
-          {loading ? 'Working...' : 'Start Checkout'}
+        {hasProAccess && (
+          <div
+            style={{
+              border: '1px solid #333',
+              padding: 'var(--space-2)',
+              fontSize: 'var(--text-xs)',
+              color: '#4ade80',
+            }}
+            aria-live="polite"
+          >
+            Pro active. Valid license key is configured on this device.
+          </div>
+        )}
+        {!hasProAccess && (
+          <>
+            <input
+              type="email"
+              placeholder="email for checkout"
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+            />
+            <button onClick={handleCheckout} disabled={loading}>
+              {loading ? 'Working...' : 'Start Checkout'}
+            </button>
+          </>
+        )}
+        <button onClick={() => setShowLicenseControls((prev) => !prev)} disabled={loading}>
+          {showLicenseControls ? 'Hide License Key' : hasProAccess ? 'Manage License Key' : 'Enter License Key'}
         </button>
-        <button onClick={handleSaveToken} disabled={loading}>
-          Save License Token
-        </button>
-        <button onClick={handleVerify} disabled={loading}>
-          Verify License
-        </button>
-        {currentToken && (
-          <button onClick={() => onLicenseToken(null)} disabled={loading}>
-            Clear License
-          </button>
+        {showLicenseControls && (
+          <>
+            <input
+              type="text"
+              placeholder="paste license token"
+              value={tokenInput}
+              onChange={(event) => setTokenInput(event.target.value)}
+            />
+            <button onClick={handleSaveToken} disabled={loading}>
+              Save License Token
+            </button>
+            <button onClick={handleVerify} disabled={loading}>
+              Verify License
+            </button>
+            {currentToken && (
+              <button onClick={() => onLicenseToken(null)} disabled={loading}>
+                Clear License
+              </button>
+            )}
+          </>
         )}
         {status && (
-          <div style={{ fontSize: 'var(--text-xs)', color: 'var(--gray)' }} aria-live="polite">
+          <div style={{ fontSize: 'var(--text-xs)', color: '#888' }} aria-live="polite">
             {status}
           </div>
         )}

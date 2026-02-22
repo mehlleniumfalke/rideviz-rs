@@ -19,6 +19,7 @@ struct ProjectedPoint {
     ground: (f64, f64),
     top: (f64, f64),
     value: Option<f64>,
+    route_progress: f64,
 }
 
 pub fn render_svg_frame(
@@ -215,6 +216,7 @@ fn project_to_isometric(
                 ground: (ground_x, ground_y),
                 top: (ground_x, top_y),
                 value: point.value,
+                route_progress: point.route_progress,
             }
         })
         .collect()
@@ -259,6 +261,7 @@ fn fit_to_viewport(
                 offset_y + (point.top.1 - min_y) * scale,
             ),
             value: point.value,
+            route_progress: point.route_progress,
         })
         .collect())
 }
@@ -500,47 +503,36 @@ fn reveal_projected_points(points: &[ProjectedPoint], progress: f64) -> Vec<Proj
         return points.to_vec();
     }
     let progress = progress.clamp(0.0, 1.0);
+    if progress <= 0.0 {
+        return vec![points[0]];
+    }
     if progress >= 1.0 {
         return points.to_vec();
     }
 
-    let segment_lengths: Vec<f64> = points
-        .windows(2)
-        .map(|pair| distance_2d(pair[0].top, pair[1].top))
-        .collect();
-    let total_length: f64 = segment_lengths.iter().sum();
-    if total_length <= f64::EPSILON {
-        return vec![points[0]];
-    }
-
-    let target_length = total_length * progress;
-    let mut traveled = 0.0;
     let mut out = vec![points[0]];
-    for (idx, segment_length) in segment_lengths.iter().copied().enumerate() {
-        if segment_length <= f64::EPSILON {
+    for idx in 0..points.len().saturating_sub(1) {
+        let current = points[idx];
+        let next = points[idx + 1];
+        if next.route_progress <= current.route_progress {
             continue;
         }
-        let next_traveled = traveled + segment_length;
-        if next_traveled < target_length {
-            out.push(points[idx + 1]);
-            traveled = next_traveled;
+        if next.route_progress < progress {
+            out.push(next);
             continue;
         }
-        let local_t = ((target_length - traveled) / segment_length).clamp(0.0, 1.0);
+        let local_t = ((progress - current.route_progress)
+            / (next.route_progress - current.route_progress))
+            .clamp(0.0, 1.0);
         out.push(ProjectedPoint {
-            ground: lerp_point(points[idx].ground, points[idx + 1].ground, local_t),
-            top: lerp_point(points[idx].top, points[idx + 1].top, local_t),
-            value: lerp_optional(points[idx].value, points[idx + 1].value, local_t),
+            ground: lerp_point(current.ground, next.ground, local_t),
+            top: lerp_point(current.top, next.top, local_t),
+            value: lerp_optional(current.value, next.value, local_t),
+            route_progress: progress,
         });
         return out;
     }
     points.to_vec()
-}
-
-fn distance_2d(a: (f64, f64), b: (f64, f64)) -> f64 {
-    let dx = b.0 - a.0;
-    let dy = b.1 - a.1;
-    (dx * dx + dy * dy).sqrt()
 }
 
 fn lerp_point(a: (f64, f64), b: (f64, f64), t: f64) -> (f64, f64) {
@@ -554,6 +546,10 @@ fn lerp_optional(a: Option<f64>, b: Option<f64>, t: f64) -> Option<f64> {
         (None, Some(y)) => Some(y),
         (None, None) => None,
     }
+}
+
+fn lerp_scalar(a: f64, b: f64, t: f64) -> f64 {
+    a + (b - a) * t
 }
 
 fn subdivide_projected_catmull(
@@ -581,6 +577,7 @@ fn subdivide_projected_catmull(
                 ground: catmull_rom_point(p0.ground, p1.ground, p2.ground, p3.ground, t, curvature),
                 top: catmull_rom_point(p0.top, p1.top, p2.top, p3.top, t, curvature),
                 value: catmull_rom_optional(p0.value, p1.value, p2.value, p3.value, t, curvature),
+                route_progress: lerp_scalar(p1.route_progress, p2.route_progress, t),
             });
         }
     }

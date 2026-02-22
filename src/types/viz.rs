@@ -52,6 +52,16 @@ pub struct RoutePoint {
     pub y: f64,
     pub value: Option<f64>,
     pub elevation: Option<f64>,
+    pub route_progress: f64,
+    pub cumulative_distance_km: f64,
+    pub cumulative_elevation_gain_m: f64,
+    pub elapsed_seconds: Option<f64>,
+    pub heart_rate: Option<f64>,
+    pub power: Option<f64>,
+    pub cumulative_avg_heart_rate: Option<f64>,
+    pub cumulative_max_heart_rate: Option<f64>,
+    pub cumulative_avg_power: Option<f64>,
+    pub cumulative_max_power: Option<f64>,
 }
 
 #[derive(Debug, Clone)]

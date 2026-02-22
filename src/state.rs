@@ -30,6 +30,8 @@ pub struct StravaSession {
     pub access_token: String,
     pub athlete_id: Option<u64>,
     pub expires_at: Instant,
+    pub oauth_client_id: Option<String>,
+    pub oauth_client_secret: Option<String>,
 }
 
 impl AppState {

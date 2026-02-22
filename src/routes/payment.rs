@@ -77,9 +77,12 @@ async fn create_checkout(
     }
 
     let config = state.config();
-    let success_url = req
-        .success_url
-        .unwrap_or_else(|| format!("{}/app?checkout=success", config.app_base_url));
+    let success_url = req.success_url.unwrap_or_else(|| {
+        format!(
+            "{}/app?checkout=success&session_id={{CHECKOUT_SESSION_ID}}",
+            config.app_base_url
+        )
+    });
     let cancel_url = req
         .cancel_url
         .unwrap_or_else(|| format!("{}/app?checkout=cancel", config.app_base_url));

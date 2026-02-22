@@ -8,7 +8,6 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashSet,
-    f64::consts::PI,
     fs,
     path::{Path as FsPath, PathBuf},
     process::Command,
@@ -22,7 +21,7 @@ use crate::state::AppState;
 use crate::types::{
     activity::{AvailableData, Metrics},
     gradient::Gradient,
-    viz::{ColorByMetric, OutputConfig, OutputFormat, RenderOptions, StatOverlayItem, VizData},
+    viz::{ColorByMetric, OutputConfig, OutputFormat, RenderOptions, RoutePoint, StatOverlayItem, VizData},
 };
 
 pub fn router() -> Router<AppState> {
@@ -166,43 +165,44 @@ fn format_duration(duration_seconds: u64) -> String {
     }
 }
 
-fn stat_key_to_overlay(
+#[derive(Debug, Clone)]
+struct StatOverlaySpec {
+    key: String,
+    label: String,
+    color_t: f64,
+}
+
+fn stat_key_to_label(
     key: &str,
     metrics: &Metrics,
     available_data: &AvailableData,
-) -> Option<(String, String)> {
+) -> Option<String> {
     match key {
-        "distance" => Some(("DIST".to_string(), format!("{:.1} km", metrics.distance_km))),
-        "duration" if metrics.duration_seconds > 0 => {
-            Some(("DUR".to_string(), format_duration(metrics.duration_seconds)))
+        "distance" => Some("DIST".to_string()),
+        "duration" if metrics.duration_seconds > 0 => Some("DUR".to_string()),
+        "elevation_gain" if available_data.has_elevation => Some("GAIN".to_string()),
+        "avg_speed" if metrics.duration_seconds > 0 => Some("AVG SPD".to_string()),
+        "avg_heart_rate" if available_data.has_heart_rate && metrics.avg_heart_rate.is_some() => {
+            Some("AVG HR".to_string())
         }
-        "elevation_gain" if available_data.has_elevation => {
-            Some(("GAIN".to_string(), format!("{:.0} m", metrics.elevation_gain_m)))
+        "max_heart_rate" if available_data.has_heart_rate && metrics.max_heart_rate.is_some() => {
+            Some("MAX HR".to_string())
         }
-        "avg_speed" if metrics.duration_seconds > 0 => {
-            Some(("AVG SPD".to_string(), format!("{:.1} km/h", metrics.avg_speed_kmh)))
+        "avg_power" if available_data.has_power && metrics.avg_power.is_some() => {
+            Some("AVG PWR".to_string())
         }
-        "avg_heart_rate" if available_data.has_heart_rate => metrics
-            .avg_heart_rate
-            .map(|v| ("AVG HR".to_string(), format!("{} bpm", v))),
-        "max_heart_rate" if available_data.has_heart_rate => metrics
-            .max_heart_rate
-            .map(|v| ("MAX HR".to_string(), format!("{} bpm", v))),
-        "avg_power" if available_data.has_power => metrics
-            .avg_power
-            .map(|v| ("AVG PWR".to_string(), format!("{} W", v))),
-        "max_power" if available_data.has_power => metrics
-            .max_power
-            .map(|v| ("MAX PWR".to_string(), format!("{} W", v))),
+        "max_power" if available_data.has_power && metrics.max_power.is_some() => {
+            Some("MAX PWR".to_string())
+        }
         _ => None,
     }
 }
 
-fn build_stats_overlay_items(
+fn build_stats_overlay_specs(
     requested_keys: Option<&Vec<String>>,
     metrics: &Metrics,
     available_data: &AvailableData,
-) -> Result<Vec<StatOverlayItem>, AppError> {
+) -> Result<Vec<StatOverlaySpec>, AppError> {
     let Some(keys) = requested_keys else {
         return Ok(Vec::new());
     };
@@ -233,33 +233,199 @@ fn build_stats_overlay_items(
     }
 
     let mut seen = HashSet::new();
-    let mut items: Vec<(String, String)> = Vec::new();
+    let mut specs: Vec<(String, String)> = Vec::new();
     for key in keys {
         if !seen.insert(key.to_string()) {
             continue;
         }
-        if let Some(entry) = stat_key_to_overlay(key, metrics, available_data) {
-            items.push(entry);
+        if let Some(label) = stat_key_to_label(key, metrics, available_data) {
+            specs.push((key.clone(), label));
         }
     }
 
-    let item_count = items.len().max(1) as f64;
-    Ok(items
+    let item_count = specs.len().max(1) as f64;
+    Ok(specs
         .into_iter()
         .enumerate()
-        .map(|(idx, (label, value))| {
+        .map(|(idx, (key, label))| {
             let t = if item_count <= 1.0 {
                 0.5
             } else {
                 idx as f64 / (item_count - 1.0)
             };
-            StatOverlayItem {
+            StatOverlaySpec {
+                key,
                 label,
-                value,
                 color_t: t,
             }
         })
         .collect())
+}
+
+#[derive(Debug, Clone, Copy)]
+struct RouteTelemetrySample {
+    distance_km: f64,
+    elevation_gain_m: f64,
+    elapsed_seconds: Option<f64>,
+    avg_heart_rate: Option<f64>,
+    max_heart_rate: Option<f64>,
+    avg_power: Option<f64>,
+    max_power: Option<f64>,
+}
+
+fn telemetry_from_point(point: &RoutePoint) -> RouteTelemetrySample {
+    RouteTelemetrySample {
+        distance_km: point.cumulative_distance_km,
+        elevation_gain_m: point.cumulative_elevation_gain_m,
+        elapsed_seconds: point.elapsed_seconds,
+        avg_heart_rate: point.cumulative_avg_heart_rate,
+        max_heart_rate: point.cumulative_max_heart_rate,
+        avg_power: point.cumulative_avg_power,
+        max_power: point.cumulative_max_power,
+    }
+}
+
+fn interpolate_optional(a: Option<f64>, b: Option<f64>, t: f64) -> Option<f64> {
+    match (a, b) {
+        (Some(x), Some(y)) => Some(x + (y - x) * t),
+        (Some(x), None) => Some(x),
+        (None, Some(y)) => Some(y),
+        (None, None) => None,
+    }
+}
+
+fn sample_route_telemetry(data: &VizData, progress: f64) -> Option<RouteTelemetrySample> {
+    if data.points.is_empty() {
+        return None;
+    }
+    let progress = progress.clamp(0.0, 1.0);
+    if progress <= 0.0 {
+        return data.points.first().map(telemetry_from_point);
+    }
+    if progress >= 1.0 {
+        return data.points.last().map(telemetry_from_point);
+    }
+
+    for idx in 0..data.points.len().saturating_sub(1) {
+        let current = &data.points[idx];
+        let next = &data.points[idx + 1];
+        if next.route_progress <= current.route_progress {
+            continue;
+        }
+        if next.route_progress < progress {
+            continue;
+        }
+        let local_t = ((progress - current.route_progress)
+            / (next.route_progress - current.route_progress))
+            .clamp(0.0, 1.0);
+        return Some(RouteTelemetrySample {
+            distance_km: current.cumulative_distance_km
+                + (next.cumulative_distance_km - current.cumulative_distance_km) * local_t,
+            elevation_gain_m: current.cumulative_elevation_gain_m
+                + (next.cumulative_elevation_gain_m - current.cumulative_elevation_gain_m)
+                    * local_t,
+            elapsed_seconds: interpolate_optional(
+                current.elapsed_seconds,
+                next.elapsed_seconds,
+                local_t,
+            ),
+            avg_heart_rate: interpolate_optional(
+                current.cumulative_avg_heart_rate,
+                next.cumulative_avg_heart_rate,
+                local_t,
+            ),
+            max_heart_rate: interpolate_optional(
+                current.cumulative_max_heart_rate,
+                next.cumulative_max_heart_rate,
+                local_t,
+            ),
+            avg_power: interpolate_optional(
+                current.cumulative_avg_power,
+                next.cumulative_avg_power,
+                local_t,
+            ),
+            max_power: interpolate_optional(
+                current.cumulative_max_power,
+                next.cumulative_max_power,
+                local_t,
+            ),
+        });
+    }
+
+    data.points.last().map(telemetry_from_point)
+}
+
+fn fallback_telemetry(metrics: &Metrics) -> RouteTelemetrySample {
+    RouteTelemetrySample {
+        distance_km: metrics.distance_km,
+        elevation_gain_m: metrics.elevation_gain_m,
+        elapsed_seconds: if metrics.duration_seconds > 0 {
+            Some(metrics.duration_seconds as f64)
+        } else {
+            None
+        },
+        avg_heart_rate: metrics.avg_heart_rate.map(|v| v as f64),
+        max_heart_rate: metrics.max_heart_rate.map(|v| v as f64),
+        avg_power: metrics.avg_power.map(|v| v as f64),
+        max_power: metrics.max_power.map(|v| v as f64),
+    }
+}
+
+fn stat_value_for_progress(
+    key: &str,
+    metrics: &Metrics,
+    telemetry: &RouteTelemetrySample,
+) -> Option<String> {
+    match key {
+        "distance" => Some(format!("{:.1} km", telemetry.distance_km)),
+        "duration" if metrics.duration_seconds > 0 => telemetry
+            .elapsed_seconds
+            .map(|seconds| format_duration(seconds.max(0.0).round() as u64)),
+        "elevation_gain" => Some(format!("{:.0} m", telemetry.elevation_gain_m.max(0.0))),
+        "avg_speed" if metrics.duration_seconds > 0 => telemetry.elapsed_seconds.map(|elapsed| {
+            let speed = if elapsed > f64::EPSILON {
+                (telemetry.distance_km / elapsed) * 3600.0
+            } else {
+                0.0
+            };
+            format!("{:.1} km/h", speed.max(0.0))
+        }),
+        "avg_heart_rate" => telemetry
+            .avg_heart_rate
+            .map(|value| format!("{:.0} bpm", value.max(0.0))),
+        "max_heart_rate" => telemetry
+            .max_heart_rate
+            .map(|value| format!("{:.0} bpm", value.max(0.0))),
+        "avg_power" => telemetry
+            .avg_power
+            .map(|value| format!("{:.0} W", value.max(0.0))),
+        "max_power" => telemetry
+            .max_power
+            .map(|value| format!("{:.0} W", value.max(0.0))),
+        _ => None,
+    }
+}
+
+fn build_stats_overlay_items_at_progress(
+    specs: &[StatOverlaySpec],
+    data: &VizData,
+    metrics: &Metrics,
+    progress: f64,
+) -> Vec<StatOverlayItem> {
+    if specs.is_empty() {
+        return Vec::new();
+    }
+
+    let telemetry = sample_route_telemetry(data, progress).unwrap_or_else(|| fallback_telemetry(metrics));
+    specs
+        .iter()
+        .map(|spec| StatOverlayItem {
+            label: spec.label.clone(),
+            value: stat_value_for_progress(&spec.key, metrics, &telemetry)
+                .unwrap_or_else(|| "-".to_string()),
+            color_t: spec.color_t,
+        })
+        .collect()
 }
 
 async fn visualize(
@@ -330,7 +496,7 @@ async fn visualize(
     options.curve_tension = curve_tension;
 
     let viz_data = prepare::prepare(&processed, &options)?;
-    let stats_overlay = build_stats_overlay_items(
+    let stats_specs = build_stats_overlay_specs(
         req.stats.as_ref(),
         &processed.metrics,
         &processed.available_data,
@@ -362,17 +528,24 @@ async fn visualize(
     };
 
     let viz_data_for_render = viz_data.clone();
+    let metrics_for_render = processed.metrics.clone();
     let options_for_render = options.clone();
     let output_for_render = output_config.clone();
-    let stats_for_render = stats_overlay.clone();
+    let specs_for_render = stats_specs.clone();
     let image_bytes = tokio::task::spawn_blocking(move || {
         if is_static {
         // Static image - render single frame at progress=1.0 (full route)
+            let stats_for_frame = build_stats_overlay_items_at_progress(
+                &specs_for_render,
+                &viz_data_for_render,
+                &metrics_for_render,
+                1.0,
+            );
             let svg = render::render_svg_frame(
                 &viz_data_for_render,
                 &options_for_render,
                 1.0,
-                &stats_for_render,
+                &stats_for_frame,
             )
             .map_err(|err| {
                 crate::error::RasterError::RenderFailed(format!(
@@ -383,7 +556,18 @@ async fn visualize(
             rasterize::rasterize(&svg, &output_for_render)
         } else {
         // Animated output
-            animate::render_apng(&viz_data_for_render, &options_for_render, &output_for_render, &stats_for_render)
+            let stats_for_animation = build_stats_overlay_items_at_progress(
+                &specs_for_render,
+                &viz_data_for_render,
+                &metrics_for_render,
+                1.0,
+            );
+            animate::render_apng(
+                &viz_data_for_render,
+                &options_for_render,
+                &output_for_render,
+                &stats_for_animation,
+            )
         }
     })
     .await
@@ -485,7 +669,7 @@ async fn export_video(
     };
 
     let viz_data = prepare::prepare(&processed, &options)?;
-    let stats_overlay = build_stats_overlay_items(
+    let stats_specs = build_stats_overlay_specs(
         req.stats.as_ref(),
         &processed.metrics,
         &processed.available_data,
@@ -498,7 +682,14 @@ async fn export_video(
     };
 
     let video_bytes = tokio::task::spawn_blocking(move || {
-        render_mp4_video(&viz_data, &options, &output_config, &stats_overlay, fps)
+        render_mp4_video(
+            &viz_data,
+            &options,
+            &output_config,
+            &stats_specs,
+            &processed.metrics,
+            fps,
+        )
     })
     .await
     .map_err(|err| AppError::Internal(format!("Video export task join failed: {}", err)))??;
@@ -522,7 +713,8 @@ fn render_mp4_video(
     data: &VizData,
     options: &RenderOptions,
     output: &OutputConfig,
-    stats: &[StatOverlayItem],
+    stats: &[StatOverlaySpec],
+    metrics: &Metrics,
     fps: u32,
 ) -> Result<Vec<u8>, AppError> {
     let work_dir = std::env::temp_dir().join(format!("rideviz-video-{}", Uuid::new_v4()));
@@ -537,8 +729,9 @@ fn render_mp4_video(
             } else {
                 idx as f64 / (options.animation_frames - 1) as f64
             };
-            let progress = ease_in_out_sine(linear_progress);
-            let svg = render::render_svg_frame(data, options, progress, stats)?;
+            let progress = animate::map_linear_progress_to_route(data, linear_progress);
+            let frame_stats = build_stats_overlay_items_at_progress(stats, data, metrics, progress);
+            let svg = render::render_svg_frame(data, options, progress, &frame_stats)?;
             let png_bytes = rasterize::rasterize(&svg, output)?;
             let frame_path = frame_file_path(&work_dir, idx);
             fs::write(&frame_path, png_bytes).map_err(|err| {
@@ -605,11 +798,6 @@ fn encode_frames_to_mp4(frame_pattern: &FsPath, output_path: &FsPath, fps: u32) 
             stderr
         }
     )))
-}
-
-fn ease_in_out_sine(t: f64) -> f64 {
-    let t = t.clamp(0.0, 1.0);
-    0.5 * (1.0 - (PI * t).cos())
 }
 
 async fn route_data(

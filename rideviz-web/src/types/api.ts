@@ -94,6 +94,16 @@ export interface RoutePoint {
   y: number;
   value: number | null;
   elevation: number | null;
+  route_progress: number;
+  cumulative_distance_km: number;
+  cumulative_elevation_gain_m: number;
+  elapsed_seconds: number | null;
+  heart_rate: number | null;
+  power: number | null;
+  cumulative_avg_heart_rate: number | null;
+  cumulative_max_heart_rate: number | null;
+  cumulative_avg_power: number | null;
+  cumulative_max_power: number | null;
 }
 
 export interface VizData {
@@ -110,6 +120,11 @@ export interface RouteDataResponse {
 export interface StravaAuthResponse {
   auth_url: string;
   state: string;
+}
+
+export interface StravaByoCredentials {
+  client_id: string;
+  client_secret: string;
 }
 
 export interface StravaCallbackResponse {
