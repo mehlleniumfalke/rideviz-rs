@@ -2,6 +2,7 @@ interface AdvancedPanelProps {
   smoothing: number;
   glow: boolean;
   animated: boolean;
+  hasProAccess: boolean;
   onChange: (config: {
     smoothing?: number;
     glow?: boolean;
@@ -13,6 +14,7 @@ export default function AdvancedPanel({
   smoothing,
   glow,
   animated,
+  hasProAccess,
   onChange,
 }: AdvancedPanelProps) {
   return (
@@ -51,8 +53,13 @@ export default function AdvancedPanel({
             checked={animated}
             onChange={(e) => onChange({ animated: e.target.checked })}
           />
-          <span style={{ fontSize: 'var(--text-xs)' }}>Animated export</span>
+          <span style={{ fontSize: 'var(--text-xs)' }}>Animated export (Pro)</span>
         </label>
+        {!hasProAccess && (
+          <span style={{ fontSize: 'var(--text-xs)', color: 'var(--gray)' }}>
+            Requires Pro license to export MP4.
+          </span>
+        )}
 
       </div>
     </div>

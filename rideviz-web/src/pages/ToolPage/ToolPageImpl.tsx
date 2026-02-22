@@ -510,7 +510,13 @@ export default function ToolPageImpl({ onNavigateHome }: ToolPageProps) {
     <>
       <ExportFormatPicker value={config.exportPreset} onChange={(exportPreset) => setConfig({ ...config, exportPreset })} />
       {config.animated && <DurationControl duration={config.duration} fps={config.fps} width={selectedFormat.width} height={selectedFormat.height} onChange={(updates) => setConfig({ ...config, ...updates })} />}
-      <AdvancedPanel smoothing={config.smoothing} glow={config.glow} animated={config.animated} onChange={(updates) => setConfig({ ...config, ...updates })} />
+      <AdvancedPanel
+        smoothing={config.smoothing}
+        glow={config.glow}
+        animated={config.animated}
+        hasProAccess={hasProAccess}
+        onChange={(updates) => setConfig({ ...config, ...updates })}
+      />
     </>
   );
   const proControl = (
