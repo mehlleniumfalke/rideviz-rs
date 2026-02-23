@@ -1,7 +1,7 @@
 use axum::{
     extract::{Path, Query, State},
     http::{header, StatusCode},
-    response::IntoResponse,
+    response::{IntoResponse, Response},
     routing::{get, post},
     Json, Router,
 };
@@ -11,17 +11,22 @@ use std::{
     fs,
     path::{Path as FsPath, PathBuf},
     process::Command,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+    time::Instant,
 };
 use uuid::Uuid;
 
 use crate::error::AppError;
 use crate::license::verify_license_token;
-use crate::pipeline::{animate, prepare, rasterize, render};
+use crate::pipeline::{prepare, progress, rasterize, render};
 use crate::state::AppState;
 use crate::types::{
     activity::{AvailableData, Metrics},
     gradient::Gradient,
-    viz::{ColorByMetric, OutputConfig, OutputFormat, RenderOptions, RoutePoint, StatOverlayItem, VizData},
+    viz::{ColorByMetric, OutputConfig, RenderOptions, RoutePoint, StatOverlayItem, VizData},
 };
 
 pub fn router() -> Router<AppState> {
@@ -29,6 +34,77 @@ pub fn router() -> Router<AppState> {
         .route("/api/visualize", post(visualize))
         .route("/api/export/video", post(export_video))
         .route("/api/route-data/:file_id", get(route_data))
+}
+
+#[derive(Serialize)]
+struct ExportVideoErrorBody {
+    error: String,
+    code: &'static str,
+    request_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    retry_after_seconds: Option<u64>,
+}
+
+fn export_video_error_response(
+    status: StatusCode,
+    code: &'static str,
+    request_id: &str,
+    message: String,
+    retry_after_seconds: Option<u64>,
+) -> Response {
+    let mut response = (
+        status,
+        Json(ExportVideoErrorBody {
+            error: message,
+            code,
+            request_id: request_id.to_string(),
+            retry_after_seconds,
+        }),
+    )
+        .into_response();
+
+    response.headers_mut().insert(
+        "x-request-id",
+        request_id.parse().unwrap_or_else(|_| "invalid".parse().unwrap()),
+    );
+
+    if let Some(seconds) = retry_after_seconds {
+        response.headers_mut().insert(
+            header::RETRY_AFTER,
+            seconds
+                .to_string()
+                .parse()
+                .unwrap_or_else(|_| "1".parse().unwrap()),
+        );
+    }
+
+    response
+}
+
+fn app_error_status_code(err: &AppError) -> StatusCode {
+    match err {
+        AppError::Parse(_)
+        | AppError::Process(_)
+        | AppError::Prepare(_)
+        | AppError::BadRequest(_) => StatusCode::BAD_REQUEST,
+        AppError::NotFound(_) => StatusCode::NOT_FOUND,
+        AppError::Unauthorized(_) => StatusCode::UNAUTHORIZED,
+        AppError::Internal(_) | AppError::Render(_) | AppError::Raster(_) => {
+            StatusCode::INTERNAL_SERVER_ERROR
+        }
+    }
+}
+
+fn app_error_code(err: &AppError) -> &'static str {
+    match err {
+        AppError::Parse(_)
+        | AppError::Process(_)
+        | AppError::Prepare(_)
+        | AppError::BadRequest(_) => "bad_request",
+        AppError::NotFound(_) => "not_found",
+        AppError::Unauthorized(_) => "unauthorized",
+        AppError::Internal(_) | AppError::Render(_) | AppError::Raster(_) => "internal",
+    }
 }
 
 #[derive(Deserialize, Serialize)]
@@ -49,18 +125,8 @@ struct VisualizeRequest {
     #[serde(default = "default_true")]
     glow: bool,
     background: Option<String>,
-    duration_seconds: Option<f32>,
-    fps: Option<u32>,
-    #[serde(default)]
-    animation_frames: Option<u32>,
-    #[serde(default)]
-    animation_duration_ms: Option<u32>,
-    #[serde(default = "default_true")]
-    watermark: bool,
     #[serde(default)]
     stats: Option<Vec<String>>,
-    #[serde(default)]
-    format: OutputFormat,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -486,31 +552,6 @@ async fn visualize(
         None => None,
     };
 
-    let (animation_frames, animation_duration_ms) = if let Some(duration_secs) = req.duration_seconds {
-        let duration_secs = duration_secs.clamp(3.0, 60.0);
-        let fps = req.fps.unwrap_or(30).clamp(15, 60);
-        let frames = (duration_secs * fps as f32).round() as u32;
-        let duration_ms = (duration_secs * 1000.0).round() as u32;
-        (frames, duration_ms)
-    } else {
-        let frames = req.animation_frames.unwrap_or(options.animation_frames).clamp(8, 60);
-        let duration_ms = req.animation_duration_ms.unwrap_or(options.animation_duration_ms).clamp(500, 8000);
-        (frames, duration_ms)
-    };
-
-    options.animation_frames = animation_frames;
-    options.animation_duration_ms = animation_duration_ms;
-
-    let megapixels = (options.width as f64 * options.height as f64) / 1_000_000.0;
-    let frame_ceiling = if megapixels > 6.0 {
-        30
-    } else if megapixels > 3.0 {
-        45
-    } else {
-        60
-    };
-    options.animation_frames = options.animation_frames.min(frame_ceiling);
-
     let (simplify, curve_tension) = smoothing_to_route_params(req.smoothing);
     options.simplify = simplify;
     options.curve_tension = curve_tension;
@@ -534,7 +575,6 @@ async fn visualize(
         }
     };
     
-    let is_static = req.duration_seconds.is_none() && req.animation_frames.is_none() && req.animation_duration_ms.is_none();
     let pro_license = bearer_token(&headers)
         .and_then(|token| verify_license_token(&token, &state.config().jwt_secret).ok())
         .map(|claims| claims.pro)
@@ -544,7 +584,7 @@ async fn visualize(
         width: options.width,
         height: options.height,
         background,
-        watermark: if is_static { !pro_license } else { req.watermark && !pro_license },
+        watermark: !pro_license,
     };
 
     let viz_data_for_render = viz_data.clone();
@@ -553,47 +593,35 @@ async fn visualize(
     let output_for_render = output_config.clone();
     let specs_for_render = stats_specs.clone();
     let image_bytes = tokio::task::spawn_blocking(move || {
-        if is_static {
         // Static image - render single frame at progress=1.0 (full route)
-            let stats_for_frame = build_stats_overlay_items_at_progress(
-                &specs_for_render,
-                &viz_data_for_render,
-                &metrics_for_render,
-                1.0,
-            );
-            let svg = render::render_svg_frame(
-                &viz_data_for_render,
-                &options_for_render,
-                1.0,
-                &stats_for_frame,
-            )
-            .map_err(|err| {
-                crate::error::RasterError::RenderFailed(format!(
-                    "Failed to render static frame: {}",
-                    err
-                ))
-            })?;
-            rasterize::rasterize(&svg, &output_for_render)
-        } else {
-            Err(crate::error::RasterError::AnimationFailed(
-                "Animated PNG export is not supported. Use /api/export/video for video export.".to_string(),
+        let stats_for_frame = build_stats_overlay_items_at_progress(
+            &specs_for_render,
+            &viz_data_for_render,
+            &metrics_for_render,
+            1.0,
+        );
+        let svg = render::render_svg_frame(
+            &viz_data_for_render,
+            &options_for_render,
+            1.0,
+            &stats_for_frame,
+        )
+        .map_err(|err| {
+            crate::error::RasterError::RenderFailed(format!(
+                "Failed to render static frame: {}",
+                err
             ))
-        }
+        })?;
+        rasterize::rasterize(&svg, &output_for_render)
     })
     .await
     .map_err(|err| AppError::Internal(format!("Rendering task join failed: {}", err)))??;
     
-    let (content_type, description) = if is_static {
-        ("image/png", "PNG")
-    } else {
-        ("image/apng", "APNG")
-    };
-    
-    tracing::info!("Generated {}: {} bytes", description, image_bytes.len());
+    tracing::info!("Generated PNG: {} bytes", image_bytes.len());
 
     Ok((
         StatusCode::OK,
-        [(header::CONTENT_TYPE, content_type)],
+        [(header::CONTENT_TYPE, "image/png")],
         image_bytes,
     ))
 }
@@ -602,40 +630,126 @@ async fn export_video(
     State(state): State<AppState>,
     headers: axum::http::HeaderMap,
     Json(req): Json<VideoExportRequest>,
-) -> Result<impl IntoResponse, AppError> {
+) -> Response {
     const MAX_MP4_DURATION_SECONDS: f32 = 15.0;
     const MAX_MP4_FPS: u32 = 30;
     const MAX_MP4_FRAMES: u32 = 450;
 
-    let token = bearer_token(&headers)
-        .ok_or_else(|| AppError::Unauthorized("Missing bearer token".to_string()))?;
-    let claims = verify_license_token(&token, &state.config().jwt_secret)
-        .map_err(|_| AppError::Unauthorized("Invalid license token".to_string()))?;
+    let request_id = Uuid::new_v4().to_string();
+    let t0 = Instant::now();
+
+    let token = match bearer_token(&headers) {
+        Some(token) => token,
+        None => {
+            return export_video_error_response(
+                StatusCode::UNAUTHORIZED,
+                "unauthorized",
+                &request_id,
+                "Missing bearer token".to_string(),
+                None,
+            );
+        }
+    };
+
+    let claims = match verify_license_token(&token, &state.config().jwt_secret) {
+        Ok(claims) => claims,
+        Err(_) => {
+            return export_video_error_response(
+                StatusCode::UNAUTHORIZED,
+                "unauthorized",
+                &request_id,
+                "Invalid license token".to_string(),
+                None,
+            );
+        }
+    };
+
     if !claims.pro {
-        return Err(AppError::Unauthorized(
+        return export_video_error_response(
+            StatusCode::UNAUTHORIZED,
+            "unauthorized",
+            &request_id,
             "Pro license required for MP4 export".to_string(),
-        ));
+            None,
+        );
     }
 
-    let processed = state
-        .get(&req.file_id)
-        .ok_or_else(|| AppError::NotFound(req.file_id.clone()))?;
+    let rate_limit_key = claims.sub;
+    if let Err(retry_after_seconds) = state.video_export_rate_limiter().check(&rate_limit_key) {
+        tracing::warn!(
+            request_id = %request_id,
+            retry_after_seconds,
+            "MP4 export rate-limited"
+        );
+        return export_video_error_response(
+            StatusCode::TOO_MANY_REQUESTS,
+            "rate_limited",
+            &request_id,
+            format!(
+                "Too many MP4 export requests. Try again in {}s.",
+                retry_after_seconds
+            ),
+            Some(retry_after_seconds),
+        );
+    }
+
+    let semaphore = state.video_export_semaphore();
+    let queue_timeout = state.config().video_export_queue_timeout;
+    let permit = match tokio::time::timeout(queue_timeout, semaphore.acquire_owned()).await {
+        Ok(Ok(permit)) => permit,
+        Ok(Err(_)) => {
+            return export_video_error_response(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "export_busy",
+                &request_id,
+                "MP4 export service is unavailable".to_string(),
+                Some(1),
+            );
+        }
+        Err(_) => {
+            let retry_after_seconds = queue_timeout.as_secs().max(1);
+            tracing::warn!(request_id = %request_id, "MP4 export concurrency limit reached");
+            return export_video_error_response(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "export_busy",
+                &request_id,
+                "MP4 export capacity is busy. Try again shortly.".to_string(),
+                Some(retry_after_seconds),
+            );
+        }
+    };
 
     let mut options = RenderOptions::route_3d_defaults();
     options.gradient = Gradient::get(&req.gradient).unwrap_or_else(Gradient::default);
     match (req.width, req.height) {
         (Some(width), Some(height)) => {
-            validate_dimensions(width, height)?;
+            if let Err(err) = validate_dimensions(width, height) {
+                return export_video_error_response(
+                    app_error_status_code(&err),
+                    app_error_code(&err),
+                    &request_id,
+                    err.to_string(),
+                    None,
+                );
+            }
             options.width = width;
             options.height = height;
         }
         (None, None) => {}
         _ => {
-            return Err(AppError::BadRequest(
+            let err = AppError::BadRequest(
                 "Both width and height must be provided together".to_string(),
-            ))
+            );
+            return export_video_error_response(
+                app_error_status_code(&err),
+                app_error_code(&err),
+                &request_id,
+                err.to_string(),
+                None,
+            );
         }
     }
+
     let (video_width, video_height) = cap_mp4_dimensions_to_720p(options.width, options.height);
     if video_width != options.width || video_height != options.height {
         tracing::info!(
@@ -654,12 +768,22 @@ async fn export_video(
     options.smoothing = req.smoothing;
     options.glow = req.glow;
     options.color_by = match req.color_by.as_deref() {
-        Some(metric) => Some(ColorByMetric::from_str(metric).ok_or_else(|| {
-            AppError::BadRequest(format!(
-                "Invalid color_by: {}. Use 'elevation', 'speed', 'heartrate', or 'power'",
-                metric
-            ))
-        })?),
+        Some(metric) => match ColorByMetric::from_str(metric) {
+            Some(metric) => Some(metric),
+            None => {
+                let err = AppError::BadRequest(format!(
+                    "Invalid color_by: {}. Use 'elevation', 'speed', 'heartrate', or 'power'",
+                    metric
+                ));
+                return export_video_error_response(
+                    app_error_status_code(&err),
+                    app_error_code(&err),
+                    &request_id,
+                    err.to_string(),
+                    None,
+                );
+            }
+        },
         None => None,
     };
 
@@ -678,24 +802,32 @@ async fn export_video(
         Some("white") | None => Some((255, 255, 255, 255)),
         Some("black") => Some((0, 0, 0, 255)),
         Some("transparent") => {
-            return Err(AppError::BadRequest(
+            let err = AppError::BadRequest(
                 "MP4 export does not support transparent background".to_string(),
-            ));
+            );
+            return export_video_error_response(
+                app_error_status_code(&err),
+                app_error_code(&err),
+                &request_id,
+                err.to_string(),
+                None,
+            );
         }
         Some(other) => {
-            return Err(AppError::BadRequest(format!(
+            let err = AppError::BadRequest(format!(
                 "Invalid background: {}. Use 'white' or 'black'",
                 other
-            )));
+            ));
+            return export_video_error_response(
+                app_error_status_code(&err),
+                app_error_code(&err),
+                &request_id,
+                err.to_string(),
+                None,
+            );
         }
     };
 
-    let viz_data = prepare::prepare(&processed, &options)?;
-    let stats_specs = build_stats_overlay_specs(
-        req.stats.as_ref(),
-        &processed.metrics,
-        &processed.available_data,
-    )?;
     let output_config = OutputConfig {
         width: options.width,
         height: options.height,
@@ -703,7 +835,38 @@ async fn export_video(
         watermark: false,
     };
 
-    let video_bytes = tokio::task::spawn_blocking(move || {
+    let processed = match state.get(&req.file_id) {
+        Some(processed) => processed,
+        None => {
+            let err = AppError::NotFound(req.file_id.clone());
+            return export_video_error_response(
+                app_error_status_code(&err),
+                app_error_code(&err),
+                &request_id,
+                err.to_string(),
+                None,
+            );
+        }
+    };
+
+    let cancel = Arc::new(AtomicBool::new(false));
+    let cancel_for_task = cancel.clone();
+    let request_id_for_log = request_id.clone();
+    let stats_requested = req.stats.clone();
+
+    let mut handle = tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        if cancel_for_task.load(Ordering::Relaxed) {
+            return Err(AppError::Internal("MP4 export cancelled".to_string()));
+        }
+
+        let viz_data = prepare::prepare(&processed, &options)?;
+        let stats_specs = build_stats_overlay_specs(
+            stats_requested.as_ref(),
+            &processed.metrics,
+            &processed.available_data,
+        )?;
+
         render_mp4_video(
             &viz_data,
             &options,
@@ -711,14 +874,69 @@ async fn export_video(
             &stats_specs,
             &processed.metrics,
             fps,
+            cancel_for_task.as_ref(),
         )
-    })
-    .await
-    .map_err(|err| AppError::Internal(format!("Video export task join failed: {}", err)))??;
+    });
 
-    tracing::info!("Generated MP4: {} bytes", video_bytes.len());
+    let render_timeout = state.config().video_export_timeout;
+    let video_bytes = match tokio::select! {
+        joined = &mut handle => Ok(joined),
+        _ = tokio::time::sleep(render_timeout) => Err(()),
+    } {
+        Ok(joined) => match joined {
+            Ok(Ok(bytes)) => bytes,
+            Ok(Err(err)) => {
+                tracing::error!(request_id = %request_id_for_log, "MP4 export failed: {}", err);
+                return export_video_error_response(
+                    app_error_status_code(&err),
+                    app_error_code(&err),
+                    &request_id,
+                    err.to_string(),
+                    None,
+                );
+            }
+            Err(err) => {
+                let app_err =
+                    AppError::Internal(format!("Video export task join failed: {}", err));
+                tracing::error!(request_id = %request_id_for_log, "MP4 export join failed: {}", app_err);
+                return export_video_error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "internal",
+                    &request_id,
+                    app_err.to_string(),
+                    None,
+                );
+            }
+        },
+        Err(_) => {
+            cancel.store(true, Ordering::Relaxed);
+            handle.abort();
+            tracing::warn!(
+                request_id = %request_id,
+                timeout_seconds = render_timeout.as_secs(),
+                "MP4 export timed out"
+            );
+            return export_video_error_response(
+                StatusCode::GATEWAY_TIMEOUT,
+                "export_timeout",
+                &request_id,
+                format!(
+                    "MP4 export timed out after {}s. Try a smaller size or shorter duration.",
+                    render_timeout.as_secs()
+                ),
+                None,
+            );
+        }
+    };
 
-    Ok((
+    tracing::info!(
+        request_id = %request_id,
+        bytes = video_bytes.len(),
+        elapsed_ms = t0.elapsed().as_millis(),
+        "Generated MP4"
+    );
+
+    let mut response = (
         StatusCode::OK,
         [
             (header::CONTENT_TYPE, "video/mp4"),
@@ -728,7 +946,13 @@ async fn export_video(
             ),
         ],
         video_bytes,
-    ))
+    )
+        .into_response();
+    response.headers_mut().insert(
+        "x-request-id",
+        request_id.parse().unwrap_or_else(|_| "invalid".parse().unwrap()),
+    );
+    response
 }
 
 fn render_mp4_video(
@@ -738,6 +962,7 @@ fn render_mp4_video(
     stats: &[StatOverlaySpec],
     metrics: &Metrics,
     fps: u32,
+    cancel: &AtomicBool,
 ) -> Result<Vec<u8>, AppError> {
     let work_dir = std::env::temp_dir().join(format!("rideviz-video-{}", Uuid::new_v4()));
     fs::create_dir_all(&work_dir).map_err(|err| {
@@ -745,17 +970,24 @@ fn render_mp4_video(
     })?;
 
     let result = (|| -> Result<Vec<u8>, AppError> {
+        if cancel.load(Ordering::Relaxed) {
+            return Err(AppError::Internal("MP4 export cancelled".to_string()));
+        }
+
         let precomputed = render::precompute_route_3d(data, options)
             .map_err(|e| AppError::Internal(format!("Failed to precompute route geometry: {}", e)))?;
 
         let t_frames_start = std::time::Instant::now();
         for idx in 0..options.animation_frames {
+            if cancel.load(Ordering::Relaxed) {
+                return Err(AppError::Internal("MP4 export cancelled".to_string()));
+            }
             let linear_progress = if options.animation_frames <= 1 {
                 1.0
             } else {
                 idx as f64 / (options.animation_frames - 1) as f64
             };
-            let progress = animate::map_linear_progress_to_route(data, linear_progress);
+            let progress = progress::map_linear_progress_to_route(data, linear_progress);
             let frame_stats = build_stats_overlay_items_at_progress(stats, data, metrics, progress);
             let svg = render::render_svg_frame_precomputed(&precomputed, options, progress, &frame_stats)
                 .map_err(|e| AppError::Internal(format!("Failed to render frame {}: {}", idx, e)))?;
@@ -780,7 +1012,7 @@ fn render_mp4_video(
         let frame_pattern = work_dir.join("frame_%05d.png");
         let output_path = work_dir.join("rideviz-route.mp4");
         let t_ffmpeg = std::time::Instant::now();
-        encode_frames_to_mp4(&frame_pattern, &output_path, fps)?;
+        encode_frames_to_mp4(&frame_pattern, &output_path, fps, cancel)?;
         tracing::info!("ffmpeg encode took {:.2}s", t_ffmpeg.elapsed().as_secs_f64());
 
         fs::read(&output_path).map_err(|err| {
@@ -800,8 +1032,17 @@ fn frame_file_path(work_dir: &FsPath, idx: u32) -> PathBuf {
     work_dir.join(format!("frame_{idx:05}.png"))
 }
 
-fn encode_frames_to_mp4(frame_pattern: &FsPath, output_path: &FsPath, fps: u32) -> Result<(), AppError> {
-    let ffmpeg_output = Command::new("ffmpeg")
+fn encode_frames_to_mp4(
+    frame_pattern: &FsPath,
+    output_path: &FsPath,
+    fps: u32,
+    cancel: &AtomicBool,
+) -> Result<(), AppError> {
+    if cancel.load(Ordering::Relaxed) {
+        return Err(AppError::Internal("MP4 export cancelled".to_string()));
+    }
+
+    let mut child = Command::new("ffmpeg")
         .arg("-y")
         .arg("-hide_banner")
         .arg("-loglevel")
@@ -819,21 +1060,48 @@ fn encode_frames_to_mp4(frame_pattern: &FsPath, output_path: &FsPath, fps: u32) 
         .arg("-movflags")
         .arg("+faststart")
         .arg(output_path)
-        .output()
+        .stderr(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .spawn()
         .map_err(|err| AppError::Internal(format!("Failed to start ffmpeg: {}", err)))?;
 
-    if ffmpeg_output.status.success() {
+    let mut stderr_reader = child
+        .stderr
+        .take()
+        .ok_or_else(|| AppError::Internal("Failed to capture ffmpeg stderr".to_string()))?;
+    let stderr_handle = std::thread::spawn(move || {
+        let mut buf = String::new();
+        let _ = std::io::Read::read_to_string(&mut stderr_reader, &mut buf);
+        buf
+    });
+
+    let status = loop {
+        if cancel.load(Ordering::Relaxed) {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(AppError::Internal("MP4 export cancelled".to_string()));
+        }
+
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) => std::thread::sleep(std::time::Duration::from_millis(100)),
+            Err(err) => return Err(AppError::Internal(format!("Failed while waiting for ffmpeg: {}", err))),
+        }
+    };
+
+    let stderr = stderr_handle
+        .join()
+        .unwrap_or_else(|_| "Failed to read ffmpeg stderr".to_string())
+        .trim()
+        .to_string();
+
+    if status.success() {
         return Ok(());
     }
 
-    let stderr = String::from_utf8_lossy(&ffmpeg_output.stderr).trim().to_string();
     Err(AppError::Internal(format!(
         "ffmpeg failed to encode MP4: {}",
-        if stderr.is_empty() {
-            "unknown error".to_string()
-        } else {
-            stderr
-        }
+        if stderr.is_empty() { "unknown error" } else { &stderr }
     )))
 }
 

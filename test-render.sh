@@ -32,7 +32,7 @@ fi
 echo "Upload successful: $FILE_ID"
 echo ""
 
-echo "3) Route 3D APNG (default profile)"
+echo "3) Static PNG (default)"
 curl -s -X POST "$RENDER_URL/api/visualize" \
   -H "Content-Type: application/json" \
   -d "{
@@ -42,22 +42,20 @@ curl -s -X POST "$RENDER_URL/api/visualize" \
     \"stroke_width\": 3,
     \"padding\": 40,
     \"smoothing\": 30,
-    \"glow\": true,
-    \"animation_frames\": 100,
-    \"animation_duration_ms\": 4600
+    \"glow\": true
   }" \
-  --output route-3d.apng
+  --output rideviz-route.png
 
-if [ -f route-3d.apng ] && [ -s route-3d.apng ]; then
-  SIZE=$(ls -lh route-3d.apng | awk '{print $5}')
-  echo "route-3d.apng created ($SIZE)"
+if [ -f rideviz-route.png ] && [ -s rideviz-route.png ]; then
+  SIZE=$(ls -lh rideviz-route.png | awk '{print $5}')
+  echo "rideviz-route.png created ($SIZE)"
 else
-  echo "route-3d.apng failed"
+  echo "rideviz-route.png failed"
   exit 1
 fi
 
 echo ""
-echo "4) Route 3D APNG (no glow)"
+echo "4) Static PNG (no glow)"
 curl -s -X POST "$RENDER_URL/api/visualize" \
   -H "Content-Type: application/json" \
   -d "{
@@ -66,13 +64,13 @@ curl -s -X POST "$RENDER_URL/api/visualize" \
     \"glow\": false,
     \"smoothing\": 50
   }" \
-  --output route-3d-no-glow.apng
+  --output rideviz-route-no-glow.png
 
-if [ -f route-3d-no-glow.apng ] && [ -s route-3d-no-glow.apng ]; then
-  SIZE=$(ls -lh route-3d-no-glow.apng | awk '{print $5}')
-  echo "route-3d-no-glow.apng created ($SIZE)"
+if [ -f rideviz-route-no-glow.png ] && [ -s rideviz-route-no-glow.png ]; then
+  SIZE=$(ls -lh rideviz-route-no-glow.png | awk '{print $5}')
+  echo "rideviz-route-no-glow.png created ($SIZE)"
 else
-  echo "route-3d-no-glow.apng failed"
+  echo "rideviz-route-no-glow.png failed"
   exit 1
 fi
 

@@ -23,4 +23,4 @@ echo.
 echo.
 
 echo 3. Replace FILE_ID_HERE and run:
-echo curl -X POST "%RENDER_URL%/api/visualize" -H "Content-Type: application/json" -d "{\"file_id\":\"FILE_ID_HERE\",\"gradient\":\"rideviz\",\"color_by\":\"elevation\",\"stroke_width\":3,\"padding\":40,\"smoothing\":30,\"glow\":true,\"animation_frames\":100,\"animation_duration_ms\":4600}" --output route-3d.apng
+echo curl -X POST "%RENDER_URL%/api/visualize" -H "Content-Type: application/json" -d "{\"file_id\":\"FILE_ID_HERE\",\"gradient\":\"rideviz\",\"color_by\":\"elevation\",\"stroke_width\":3,\"padding\":40,\"smoothing\":30,\"glow\":true}" --output rideviz-route.png

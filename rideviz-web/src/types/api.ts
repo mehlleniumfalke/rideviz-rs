@@ -33,7 +33,6 @@ export type ExportPreset =
   | 'hd_landscape_16x9';
 export type ColorByMetric = 'elevation' | 'speed' | 'heartrate' | 'power';
 export type BackgroundColor = 'transparent' | 'white' | 'black';
-export type OutputFormat = 'png';
 export type StatKey =
   | 'distance'
   | 'duration'
@@ -64,12 +63,6 @@ export interface VisualizeRequest {
   color_by?: ColorByMetric;
   glow?: boolean;
   background?: BackgroundColor;
-  duration_seconds?: number;
-  fps?: number;
-  animation_frames?: number;
-  animation_duration_ms?: number;
-  watermark?: boolean;
-  format?: OutputFormat;
   stats?: StatKey[];
 }
 

@@ -134,11 +134,11 @@ export async function verifyLicense(authToken: string): Promise<LicenseVerifyRes
   return (await response.json()) as LicenseVerifyResponse;
 }
 
-export async function handleStripeWebhookCompletion(payload: unknown): Promise<LicenseResponse> {
-  const response = await fetch(buildUrl('/api/webhook/stripe'), {
+export async function issueMockLicense(email: string): Promise<LicenseResponse> {
+  const response = await fetch(buildUrl('/api/dev/license/issue'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
+    body: JSON.stringify({ email }),
   });
   if (!response.ok) {
     throw new Error(await readError(response));

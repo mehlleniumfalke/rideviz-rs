@@ -5,13 +5,14 @@ import {
   exportVideo,
   getRouteData,
   getVisualization,
-  handleStripeWebhookCompletion,
+  issueMockLicense,
   verifyLicense,
   uploadFile,
 } from '../../api/client';
 import { captureEvent } from '../../analytics/posthog';
 import { mapLinearProgressToRoute } from '../../engine/animate';
 import { renderFrame } from '../../engine/render';
+import { drawRideVizWatermark } from '../../engine/watermark';
 import { addGenerationHistoryEntry } from '../../storage/history';
 import type { AvailableData, BackgroundColor, ColorByMetric, ExportPreset, GradientName, Metrics, StatKey, UploadResponse, VideoExportRequest, VisualizeRequest, VizData } from '../../types/api';
 import AdvancedPanel from './AdvancedPanel';
@@ -236,9 +237,6 @@ export default function ToolPageImpl({ onNavigateHome }: ToolPageProps) {
         progress,
       );
       renderFrame(ctx, { data: routeData, stats, options: { width: selectedFormat.width, height: selectedFormat.height, padding: FIXED_PADDING, strokeWidth: FIXED_STROKE_WIDTH, smoothing: config.smoothing, glow: config.glow, background: config.background, gradient: config.gradient, progress } });
-      if (!hasProAccess && !config.animated) {
-        drawWatermark(ctx, selectedFormat.width, selectedFormat.height);
-      }
     };
     if (!config.animated) {
       draw(1);
@@ -312,14 +310,12 @@ export default function ToolPageImpl({ onNavigateHome }: ToolPageProps) {
     const completeCheckout = async () => {
       try {
         if (checkout === 'mock' && email && !licenseToken) {
-          const result = await handleStripeWebhookCompletion({
-            type: 'checkout.session.completed',
-            data: {
-              object: {
-                customer_email: email,
-              },
-            },
-          });
+          if (!import.meta.env.DEV) {
+            clearCheckoutParams();
+            return;
+          }
+
+          const result = await issueMockLicense(email);
           if (cancelled) return;
           setLicenseToken(result.token);
           captureEvent('rv_checkout_completed', {
@@ -392,7 +388,6 @@ export default function ToolPageImpl({ onNavigateHome }: ToolPageProps) {
       glow: config.glow,
       background: config.background,
       stats: config.stats.length ? config.stats : undefined,
-      watermark: !hasProAccess,
     };
   };
 
@@ -406,17 +401,6 @@ export default function ToolPageImpl({ onNavigateHome }: ToolPageProps) {
         reject(new Error('Failed to build PNG export.'));
       }, 'image/png');
     });
-
-  const drawWatermark = (ctx: CanvasRenderingContext2D, width: number, height: number) => {
-    const fontSize = Math.max(13, Math.round(height * 0.02));
-    ctx.save();
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'bottom';
-    ctx.fillStyle = 'rgb(0,0,0)';
-    ctx.font = `${fontSize}px Geist Pixel, monospace`;
-    ctx.fillText('created with rideviz.online', width / 2, height - 16);
-    ctx.restore();
-  };
 
   const buildStaticBlob = async (): Promise<Blob> => {
     if (hasProAccess) {
@@ -441,7 +425,7 @@ export default function ToolPageImpl({ onNavigateHome }: ToolPageProps) {
       return getVisualization(request);
     }
     ctx.drawImage(source, 0, 0);
-    drawWatermark(ctx, canvas.width, canvas.height);
+    drawRideVizWatermark(ctx, canvas.width, canvas.height);
     return canvasToPngBlob(canvas);
   };
 
@@ -690,6 +674,7 @@ export default function ToolPageImpl({ onNavigateHome }: ToolPageProps) {
           isAnimated={config.animated}
           canAnimatedExport={hasProAccess}
           shareStatus={shareStatus}
+          showWatermark={!hasProAccess}
           emptyState={<UploadZone onFileSelect={handleFileSelect} isUploading={isUploading} error={uploadError || undefined} />}
         />
         <aside className="tool-controls" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>

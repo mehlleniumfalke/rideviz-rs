@@ -143,7 +143,7 @@ function App() {
         >
           <img
             src="/rideviz-route.apng"
-            alt="Sample route animation"
+            alt="Route preview animation"
             loading="eager"
             decoding="async"
             style={{

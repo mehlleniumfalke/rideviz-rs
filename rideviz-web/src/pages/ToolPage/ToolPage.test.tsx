@@ -73,5 +73,9 @@ describe('ToolPage', () => {
     await waitFor(() => {
       expect(getVisualizationMock).toHaveBeenCalled();
     });
+
+    const [payload] = getVisualizationMock.mock.calls[0] as [Record<string, unknown>];
+    expect(payload).toEqual(expect.objectContaining({ file_id: 'file-123' }));
+    expect(payload).not.toHaveProperty('watermark');
   });
 });

@@ -31,7 +31,7 @@ Expected fields:
 - `metrics`
 - `available_data`
 
-## 3) Route 3D APNG
+## 3) Static PNG export
 
 ```bash
 curl -X POST https://YOUR_RENDER_URL/api/visualize \
@@ -43,23 +43,20 @@ curl -X POST https://YOUR_RENDER_URL/api/visualize \
     "stroke_width": 3,
     "padding": 40,
     "smoothing": 30,
-    "glow": true,
-    "animation_frames": 100,
-    "animation_duration_ms": 4600
+    "glow": true
   }' \
-  --output route-3d.apng
+  --output rideviz-route.png
 ```
 
 ## 4) Verify output
 
 ```bash
-ls -lh route-3d.apng
+ls -lh rideviz-route.png
 ```
 
-Open the APNG and verify:
+Open the PNG and verify:
 - transparent background
 - 3D elevated route effect
-- animation plays smoothly
 
 ## Option checks
 
@@ -69,7 +66,7 @@ Open the APNG and verify:
 curl -X POST https://YOUR_RENDER_URL/api/visualize \
   -H "Content-Type: application/json" \
   -d '{"file_id":"FILE_ID","gradient":"fire"}' \
-  --output route-fire.apng
+  --output route-fire.png
 ```
 
 ### Disable glow
@@ -78,7 +75,7 @@ curl -X POST https://YOUR_RENDER_URL/api/visualize \
 curl -X POST https://YOUR_RENDER_URL/api/visualize \
   -H "Content-Type: application/json" \
   -d '{"file_id":"FILE_ID","glow":false}' \
-  --output route-no-glow.apng
+  --output route-no-glow.png
 ```
 
 ### Smoothing variants
@@ -87,10 +84,10 @@ curl -X POST https://YOUR_RENDER_URL/api/visualize \
 curl -X POST https://YOUR_RENDER_URL/api/visualize \
   -H "Content-Type: application/json" \
   -d '{"file_id":"FILE_ID","smoothing":0}' \
-  --output route-raw.apng
+  --output route-raw.png
 
 curl -X POST https://YOUR_RENDER_URL/api/visualize \
   -H "Content-Type: application/json" \
   -d '{"file_id":"FILE_ID","smoothing":100}' \
-  --output route-smooth.apng
+  --output route-smooth.png
 ```

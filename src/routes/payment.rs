@@ -1,13 +1,17 @@
 use std::time::{Duration, Instant};
 
 use axum::{
+    body::Bytes,
     extract::State,
     http::HeaderMap,
     routing::{get, post},
     Json, Router,
 };
+use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sha2::Sha256;
+use subtle::ConstantTimeEq;
 use uuid::Uuid;
 
 use crate::{
@@ -21,6 +25,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/checkout", post(create_checkout))
         .route("/api/checkout/complete", post(complete_checkout))
         .route("/api/webhook/stripe", post(stripe_webhook))
+        .route("/api/dev/license/issue", post(issue_mock_license))
         .route("/api/license/verify", get(verify_license))
 }
 
@@ -35,6 +40,11 @@ struct CheckoutRequest {
 struct CheckoutResponse {
     checkout_url: String,
     mode: &'static str,
+}
+
+#[derive(Debug, Deserialize)]
+struct IssueMockLicenseRequest {
+    email: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -88,6 +98,11 @@ async fn create_checkout(
         .unwrap_or_else(|| format!("{}/app?checkout=cancel", config.app_base_url));
 
     let Some(secret) = &config.stripe_secret_key else {
+        if !config.stripe_allow_mock {
+            return Err(AppError::BadRequest(
+                "Stripe checkout is not configured".to_string(),
+            ));
+        }
         return Ok(Json(CheckoutResponse {
             checkout_url: format!(
                 "{}/app?checkout=mock&email={}",
@@ -147,15 +162,26 @@ async fn create_checkout(
 async fn stripe_webhook(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Json(payload): Json<StripeWebhookPayload>,
+    body: Bytes,
 ) -> Result<Json<LicenseResponse>, AppError> {
-    if state.config().stripe_webhook_secret.is_some()
-        && headers.get("stripe-signature").is_none()
-    {
-        return Err(AppError::Unauthorized(
-            "Missing Stripe signature header".to_string(),
+    let Some(secret) = state.config().stripe_webhook_secret.as_deref() else {
+        return Err(AppError::NotFound(
+            "Stripe webhook endpoint is disabled".to_string(),
         ));
-    }
+    };
+
+    let signature_header = headers
+        .get("stripe-signature")
+        .and_then(|value| value.to_str().ok())
+        .ok_or_else(|| {
+            AppError::Unauthorized("Missing Stripe signature header".to_string())
+        })?;
+
+    verify_stripe_signature(secret, signature_header, &body)?;
+
+    let payload: StripeWebhookPayload = serde_json::from_slice(&body).map_err(|_| {
+        AppError::BadRequest("Invalid Stripe webhook payload".to_string())
+    })?;
 
     let completed = payload.event_type == "checkout.session.completed";
     if !completed {
@@ -181,6 +207,21 @@ async fn stripe_webhook(
         .ok_or_else(|| AppError::BadRequest("Stripe webhook missing customer email".to_string()))?;
 
     Ok(Json(issue_license_for_email(&state, email)?))
+}
+
+async fn issue_mock_license(
+    State(state): State<AppState>,
+    Json(req): Json<IssueMockLicenseRequest>,
+) -> Result<Json<LicenseResponse>, AppError> {
+    if !state.config().stripe_allow_mock {
+        return Err(AppError::NotFound("Endpoint disabled".to_string()));
+    }
+
+    if req.email.trim().is_empty() {
+        return Err(AppError::BadRequest("Email is required".to_string()));
+    }
+
+    Ok(Json(issue_license_for_email(&state, req.email.trim())?))
 }
 
 async fn complete_checkout(
@@ -301,4 +342,70 @@ fn issue_license_for_email(state: &AppState, email: &str) -> Result<LicenseRespo
         pro: true,
         expires_in_seconds: LIFETIME_SECONDS,
     })
+}
+
+fn verify_stripe_signature(
+    secret: &str,
+    signature_header: &str,
+    payload: &[u8],
+) -> Result<(), AppError> {
+    const TOLERANCE_SECONDS: i64 = 300;
+
+    let mut timestamp: Option<i64> = None;
+    let mut v1_signatures: Vec<Vec<u8>> = Vec::new();
+
+    for part in signature_header.split(',') {
+        let mut iter = part.trim().splitn(2, '=');
+        let key = iter.next().unwrap_or("").trim();
+        let value = iter.next().unwrap_or("").trim();
+        match key {
+            "t" => {
+                timestamp = value.parse::<i64>().ok();
+            }
+            "v1" => {
+                let decoded = hex::decode(value).map_err(|_| {
+                    AppError::Unauthorized("Invalid Stripe signature".to_string())
+                })?;
+                v1_signatures.push(decoded);
+            }
+            _ => {}
+        }
+    }
+
+    let timestamp = timestamp.ok_or_else(|| {
+        AppError::Unauthorized("Invalid Stripe signature".to_string())
+    })?;
+    if v1_signatures.is_empty() {
+        return Err(AppError::Unauthorized("Invalid Stripe signature".to_string()));
+    }
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    if (now - timestamp).abs() > TOLERANCE_SECONDS {
+        return Err(AppError::Unauthorized(
+            "Expired Stripe signature".to_string(),
+        ));
+    }
+
+    let mut signed_payload = timestamp.to_string().into_bytes();
+    signed_payload.push(b'.');
+    signed_payload.extend_from_slice(payload);
+
+    let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).map_err(|_| {
+        AppError::Internal("Invalid Stripe webhook secret".to_string())
+    })?;
+    mac.update(&signed_payload);
+    let expected = mac.finalize().into_bytes();
+
+    for candidate in v1_signatures {
+        if candidate.as_slice().ct_eq(expected.as_slice()).into() {
+            return Ok(());
+        }
+    }
+
+    Err(AppError::Unauthorized(
+        "Invalid Stripe signature".to_string(),
+    ))
 }

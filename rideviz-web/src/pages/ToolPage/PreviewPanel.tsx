@@ -16,6 +16,7 @@ interface PreviewPanelProps {
   isAnimated: boolean;
   canAnimatedExport: boolean;
   shareStatus: string | null;
+  showWatermark?: boolean;
   emptyState?: ReactNode;
 }
 
@@ -34,6 +35,7 @@ export default function PreviewPanel({
   isAnimated,
   canAnimatedExport,
   shareStatus,
+  showWatermark,
   emptyState,
 }: PreviewPanelProps) {
   const previewRatio = previewWidth / previewHeight;
@@ -92,6 +94,7 @@ export default function PreviewPanel({
               width: `min(960px, 100%, calc(60vh * ${previewRatio}))`,
               aspectRatio: previewAspectRatio,
               ...previewSurfaceStyle,
+              position: 'relative',
             }}
           >
             <canvas
@@ -103,6 +106,30 @@ export default function PreviewPanel({
                 height: '100%',
               }}
             />
+            {showWatermark && !isAnimated && (
+              <div
+                aria-label="Watermark"
+                style={{
+                  position: 'absolute',
+                  left: '50%',
+                  bottom: '12px',
+                  transform: 'translateX(-50%)',
+                  padding: 'clamp(6px, 0.8vw, 10px) clamp(10px, 1.2vw, 16px)',
+                  borderRadius: '999px',
+                  background: 'rgba(0,0,0,0.35)',
+                  border: '1px solid rgba(255,255,255,0.22)',
+                  color: 'rgba(255,255,255,0.92)',
+                  fontFamily: 'Geist Pixel, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+                  fontSize: 'clamp(12px, 1.6vw, 18px)',
+                  lineHeight: 1,
+                  letterSpacing: '0.2px',
+                  userSelect: 'none',
+                  pointerEvents: 'none',
+                }}
+              >
+                created with rideviz.online
+              </div>
+            )}
           </div>
         )}
       </div>
