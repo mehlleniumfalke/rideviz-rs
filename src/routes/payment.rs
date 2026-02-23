@@ -20,6 +20,8 @@ use crate::{
     state::{AppState, CachedLicense},
 };
 
+const LICENSE_LIFETIME_SECONDS: u64 = 100 * 365 * 24 * 3600;
+
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/checkout", post(create_checkout))
@@ -119,18 +121,39 @@ async fn create_checkout(
         ));
     };
 
+    let customer_email = req.email.trim();
+    let preissued_license_key = create_license_token(
+        &Uuid::new_v4().to_string(),
+        customer_email,
+        true,
+        LICENSE_LIFETIME_SECONDS,
+        &state.config().jwt_secret,
+    )?;
+    let invoice_footer = format!("Rideviz Pro license key: {}", preissued_license_key);
+    let form = vec![
+        ("mode".to_string(), "payment".to_string()),
+        ("success_url".to_string(), success_url),
+        ("cancel_url".to_string(), cancel_url),
+        ("customer_email".to_string(), customer_email.to_string()),
+        ("metadata[rideviz_license_key]".to_string(), preissued_license_key.clone()),
+        ("invoice_creation[enabled]".to_string(), "true".to_string()),
+        (
+            "invoice_creation[invoice_data][metadata][rideviz_license_key]".to_string(),
+            preissued_license_key.clone(),
+        ),
+        (
+            "invoice_creation[invoice_data][footer]".to_string(),
+            invoice_footer,
+        ),
+        ("line_items[0][price]".to_string(), price_id.clone()),
+        ("line_items[0][quantity]".to_string(), "1".to_string()),
+    ];
+
     let client = reqwest::Client::new();
     let response = client
         .post("https://api.stripe.com/v1/checkout/sessions")
         .bearer_auth(secret)
-        .form(&[
-            ("mode", "payment"),
-            ("success_url", success_url.as_str()),
-            ("cancel_url", cancel_url.as_str()),
-            ("customer_email", req.email.as_str()),
-            ("line_items[0][price]", price_id.as_str()),
-            ("line_items[0][quantity]", "1"),
-        ])
+        .form(&form)
         .send()
         .await
         .map_err(|err| AppError::Internal(format!("Failed to create Stripe checkout session: {}", err)))?;
@@ -206,7 +229,22 @@ async fn stripe_webhook(
         })
         .ok_or_else(|| AppError::BadRequest("Stripe webhook missing customer email".to_string()))?;
 
-    Ok(Json(issue_license_for_email(&state, email)?))
+    let preissued_license_key = stripe_session_license_key(&payload.data.object);
+    let invoice_id = stripe_invoice_id(&payload.data.object).map(str::to_string);
+    let license = issue_license_for_email(&state, email, preissued_license_key)?;
+    if let Some(invoice_id) = invoice_id {
+        if let Err(err) =
+            attach_license_to_stripe_invoice(&state, &invoice_id, &license.token).await
+        {
+            tracing::warn!(
+                invoice_id = %invoice_id,
+                error = %err,
+                "Failed to attach generated license key to Stripe invoice"
+            );
+        }
+    }
+
+    Ok(Json(license))
 }
 
 async fn issue_mock_license(
@@ -221,7 +259,7 @@ async fn issue_mock_license(
         return Err(AppError::BadRequest("Email is required".to_string()));
     }
 
-    Ok(Json(issue_license_for_email(&state, req.email.trim())?))
+    Ok(Json(issue_license_for_email(&state, req.email.trim(), None)?))
 }
 
 async fn complete_checkout(
@@ -285,7 +323,22 @@ async fn complete_checkout(
         })
         .ok_or_else(|| AppError::BadRequest("Stripe session missing customer email".to_string()))?;
 
-    Ok(Json(issue_license_for_email(&state, email)?))
+    let preissued_license_key = stripe_session_license_key(&payload);
+    let invoice_id = stripe_invoice_id(&payload).map(str::to_string);
+    let license = issue_license_for_email(&state, email, preissued_license_key)?;
+    if let Some(invoice_id) = invoice_id {
+        if let Err(err) =
+            attach_license_to_stripe_invoice(&state, &invoice_id, &license.token).await
+        {
+            tracing::warn!(
+                invoice_id = %invoice_id,
+                error = %err,
+                "Failed to attach generated license key to Stripe invoice"
+            );
+        }
+    }
+
+    Ok(Json(license))
 }
 
 async fn verify_license(
@@ -319,29 +372,118 @@ fn bearer_token(headers: &HeaderMap) -> Option<String> {
     raw.strip_prefix("Bearer ").map(|token| token.trim().to_string())
 }
 
-fn issue_license_for_email(state: &AppState, email: &str) -> Result<LicenseResponse, AppError> {
-    const LIFETIME_SECONDS: u64 = 100 * 365 * 24 * 3600;
+fn issue_license_for_email(
+    state: &AppState,
+    email: &str,
+    preissued_license_key: Option<&str>,
+) -> Result<LicenseResponse, AppError> {
+    let email = email.trim();
+    if email.is_empty() {
+        return Err(AppError::BadRequest("Email is required".to_string()));
+    }
 
-    let token = create_license_token(
-        &Uuid::new_v4().to_string(),
-        email,
-        true,
-        LIFETIME_SECONDS,
-        &state.config().jwt_secret,
-    )?;
+    let token = resolve_license_token(state, email, preissued_license_key)?;
 
     state.store_license(CachedLicense {
         token: token.clone(),
         email: email.to_string(),
         is_pro: true,
-        expires_at: Instant::now() + Duration::from_secs(LIFETIME_SECONDS),
+        expires_at: Instant::now() + Duration::from_secs(LICENSE_LIFETIME_SECONDS),
     });
 
     Ok(LicenseResponse {
         token,
         pro: true,
-        expires_in_seconds: LIFETIME_SECONDS,
+        expires_in_seconds: LICENSE_LIFETIME_SECONDS,
     })
+}
+
+fn resolve_license_token(
+    state: &AppState,
+    email: &str,
+    preissued_license_key: Option<&str>,
+) -> Result<String, AppError> {
+    if let Some(candidate) = preissued_license_key
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        match verify_license_token(candidate, &state.config().jwt_secret) {
+            Ok(claims) if claims.pro && claims.email.eq_ignore_ascii_case(email) => {
+                return Ok(candidate.to_string());
+            }
+            Ok(claims) => {
+                tracing::warn!(
+                    customer_email = %email,
+                    token_email = %claims.email,
+                    token_pro = claims.pro,
+                    "Preissued license key claims mismatch; generating a new token"
+                );
+            }
+            Err(err) => {
+                tracing::warn!(
+                    customer_email = %email,
+                    error = %err,
+                    "Invalid preissued license key; generating a new token"
+                );
+            }
+        }
+    }
+
+    create_license_token(
+        &Uuid::new_v4().to_string(),
+        email,
+        true,
+        LICENSE_LIFETIME_SECONDS,
+        &state.config().jwt_secret,
+    )
+}
+
+fn stripe_session_license_key(payload: &Value) -> Option<&str> {
+    payload
+        .get("metadata")
+        .and_then(|metadata| metadata.get("rideviz_license_key"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+}
+
+fn stripe_invoice_id(payload: &Value) -> Option<&str> {
+    payload.get("invoice").and_then(|invoice| {
+        invoice
+            .as_str()
+            .or_else(|| invoice.get("id").and_then(Value::as_str))
+    })
+}
+
+async fn attach_license_to_stripe_invoice(
+    state: &AppState,
+    invoice_id: &str,
+    license_key: &str,
+) -> Result<(), AppError> {
+    let Some(secret) = state.config().stripe_secret_key.as_deref() else {
+        return Ok(());
+    };
+
+    let invoice_url = format!("https://api.stripe.com/v1/invoices/{}", invoice_id);
+    let client = reqwest::Client::new();
+    let response = client
+        .post(invoice_url)
+        .bearer_auth(secret)
+        .form(&[("metadata[rideviz_license_key]", license_key)])
+        .send()
+        .await
+        .map_err(|err| AppError::Internal(format!("Failed to update Stripe invoice: {}", err)))?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(AppError::Internal(format!(
+            "Stripe invoice update failed ({}): {}",
+            status, body
+        )));
+    }
+
+    Ok(())
 }
 
 fn verify_stripe_signature(
