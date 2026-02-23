@@ -66,7 +66,7 @@ fn inject_watermark(
     width: u32,
     height: u32,
 ) -> String {
-    const WATERMARK_TEXT: &str = "created with rideviz.online";
+    const WATERMARK_TEXT: &str = "rideviz.online";
     const WATERMARK_ID: &str = "rideviz-watermark";
 
     if svg.contains(WATERMARK_ID) {
@@ -74,9 +74,9 @@ fn inject_watermark(
     }
 
     let font_size = ((height as f32 * 0.020) as u32).max(13);
-    let padding_x = ((font_size as f32 * 0.75) as u32).max(8);
-    let padding_y = ((font_size as f32 * 0.45) as u32).max(6);
-    let margin_bottom = ((font_size as f32 * 1.1) as u32).max(14);
+    let padding_x = ((font_size as f32 * 0.7) as u32).max(8);
+    let padding_y = ((font_size as f32 * 0.5) as u32).max(6);
+    let margin_bottom = ((font_size as f32 * 1.15) as u32).max(16);
 
     let text_x = width / 2;
     let text_y = height.saturating_sub(margin_bottom);
@@ -86,16 +86,14 @@ fn inject_watermark(
     let box_height = (font_size + padding_y * 2).min(height.saturating_sub(12));
     let box_x = text_x.saturating_sub(box_width / 2);
     let box_y = text_y.saturating_sub(font_size + padding_y);
-    let radius = ((font_size as f32 * 0.75) as u32).min(14);
+    let radius = ((font_size as f32 * 0.3).round() as u32).clamp(3, 6);
 
-    let border_width = ((font_size as f32 * 0.06).round() as u32).max(1);
-    let outline_width = ((font_size as f32 * 0.18).round() as u32).max(2);
+    let border_width = ((font_size as f32 * 0.08).round() as u32).max(1);
 
     let nodes = format!(
         "<g id=\"{WATERMARK_ID}\">\
-<rect x=\"{box_x}\" y=\"{box_y}\" width=\"{box_width}\" height=\"{box_height}\" rx=\"{radius}\" fill=\"rgb(0,0,0)\" fill-opacity=\"0.35\" stroke=\"rgb(255,255,255)\" stroke-opacity=\"0.22\" stroke-width=\"{border_width}\" />\
-<text x=\"{text_x}\" y=\"{text_y}\" font-family=\"Geist Pixel, DejaVu Sans Mono, DejaVu Sans, sans-serif\" font-size=\"{font_size}\" text-anchor=\"middle\" fill=\"none\" stroke=\"rgb(0,0,0)\" stroke-opacity=\"0.70\" stroke-width=\"{outline_width}\" stroke-linejoin=\"round\">{WATERMARK_TEXT}</text>\
-<text x=\"{text_x}\" y=\"{text_y}\" font-family=\"Geist Pixel, DejaVu Sans Mono, DejaVu Sans, sans-serif\" font-size=\"{font_size}\" text-anchor=\"middle\" fill=\"rgb(255,255,255)\" fill-opacity=\"0.92\">{WATERMARK_TEXT}</text>\
+<rect x=\"{box_x}\" y=\"{box_y}\" width=\"{box_width}\" height=\"{box_height}\" rx=\"{radius}\" fill=\"rgb(255,255,255)\" fill-opacity=\"0.90\" stroke=\"rgb(0,0,0)\" stroke-opacity=\"0.92\" stroke-width=\"{border_width}\" />\
+<text x=\"{text_x}\" y=\"{text_y}\" font-family=\"Geist Pixel, DejaVu Sans Mono, DejaVu Sans, sans-serif\" font-size=\"{font_size}\" text-anchor=\"middle\" fill=\"rgb(0,0,0)\" fill-opacity=\"0.92\">{WATERMARK_TEXT}</text>\
 </g>"
     );
 
@@ -115,7 +113,7 @@ mod tests {
         let svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"100\" height=\"100\"></svg>";
         let injected = inject_watermark(svg, 100, 100);
         assert!(injected.contains("id=\"rideviz-watermark\""));
-        assert!(injected.contains("created with rideviz.online"));
+        assert!(injected.contains("rideviz.online"));
 
         let injected_twice = inject_watermark(&injected, 100, 100);
         assert_eq!(

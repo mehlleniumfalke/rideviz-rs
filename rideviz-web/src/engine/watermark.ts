@@ -1,4 +1,4 @@
-const DEFAULT_WATERMARK_TEXT = 'created with rideviz.online';
+const DEFAULT_WATERMARK_TEXT = 'rideviz.online';
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
@@ -29,9 +29,9 @@ export function drawRideVizWatermark(
   text = DEFAULT_WATERMARK_TEXT,
 ): void {
   const fontSize = Math.max(13, Math.round(height * 0.02));
-  const paddingX = Math.round(fontSize * 0.75);
-  const paddingY = Math.round(fontSize * 0.45);
-  const marginBottom = Math.max(14, Math.round(fontSize * 1.1));
+  const paddingX = Math.round(fontSize * 0.7);
+  const paddingY = Math.round(fontSize * 0.5);
+  const marginBottom = Math.max(16, Math.round(fontSize * 1.15));
   const x = width / 2;
   const y = height - marginBottom;
 
@@ -48,21 +48,21 @@ export function drawRideVizWatermark(
   const boxHeight = Math.min(maxBoxHeight, Math.ceil(fontSize + paddingY * 2));
   const boxX = Math.round(x - boxWidth / 2);
   const boxY = Math.round(y - fontSize - paddingY);
-  const radius = Math.round(Math.min(14, fontSize * 0.75));
+  const radius = Math.round(Math.max(3, Math.min(6, fontSize * 0.3)));
 
   roundedRectPath(ctx, boxX, boxY, boxWidth, boxHeight, radius);
-  ctx.fillStyle = 'rgba(0,0,0,0.35)';
+  ctx.shadowColor = 'rgba(0,0,0,0.12)';
+  ctx.shadowBlur = 0;
+  ctx.shadowOffsetX = 0;
+  ctx.shadowOffsetY = 1;
+  ctx.fillStyle = 'rgba(255,255,255,0.90)';
   ctx.fill();
-  ctx.strokeStyle = 'rgba(255,255,255,0.22)';
-  ctx.lineWidth = Math.max(1, Math.round(fontSize * 0.06));
+  ctx.shadowColor = 'transparent';
+  ctx.strokeStyle = 'rgba(0,0,0,0.92)';
+  ctx.lineWidth = Math.max(1, Math.round(fontSize * 0.08));
   ctx.stroke();
 
-  ctx.lineJoin = 'round';
-  ctx.miterLimit = 2;
-  ctx.strokeStyle = 'rgba(0,0,0,0.70)';
-  ctx.lineWidth = Math.max(2, Math.round(fontSize * 0.18));
-  ctx.fillStyle = 'rgba(255,255,255,0.92)';
-  ctx.strokeText(text, x, y);
+  ctx.fillStyle = 'rgba(0,0,0,0.92)';
   ctx.fillText(text, x, y);
 
   ctx.restore();

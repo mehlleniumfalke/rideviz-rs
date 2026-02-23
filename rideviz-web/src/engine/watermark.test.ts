@@ -33,7 +33,6 @@ describe('drawRideVizWatermark', () => {
 
     expect(calls).toContain('fill');
     expect(calls).toContain('stroke');
-    expect(calls).toContain('strokeText');
     expect(calls).toContain('fillText');
   });
 
@@ -42,4 +41,3 @@ describe('drawRideVizWatermark', () => {
     expect(() => drawRideVizWatermark(ctx, 8, 8)).not.toThrow();
   });
 });
-

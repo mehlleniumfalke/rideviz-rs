@@ -237,6 +237,9 @@ export default function ToolPageImpl({ onNavigateHome }: ToolPageProps) {
         progress,
       );
       renderFrame(ctx, { data: routeData, stats, options: { width: selectedFormat.width, height: selectedFormat.height, padding: FIXED_PADDING, strokeWidth: FIXED_STROKE_WIDTH, smoothing: config.smoothing, glow: config.glow, background: config.background, gradient: config.gradient, progress } });
+      if (!hasProAccess && !config.animated) {
+        drawRideVizWatermark(ctx, selectedFormat.width, selectedFormat.height);
+      }
     };
     if (!config.animated) {
       draw(1);
@@ -403,30 +406,19 @@ export default function ToolPageImpl({ onNavigateHome }: ToolPageProps) {
     });
 
   const buildStaticBlob = async (): Promise<Blob> => {
-    if (hasProAccess) {
-      const request = buildServerRequest();
-      if (!request) throw new Error('Missing export request.');
-      return getVisualization(request, undefined, licenseToken ?? undefined);
-    }
+    const request = buildServerRequest();
+    if (!request) throw new Error('Missing export request.');
 
-    const source = previewCanvasRef.current;
-    if (!source) {
-      const request = buildServerRequest();
-      if (!request) throw new Error('Missing export request.');
+    try {
+      if (hasProAccess) {
+        return getVisualization(request, undefined, licenseToken ?? undefined);
+      }
       return getVisualization(request);
+    } catch {
+      const source = previewCanvasRef.current;
+      if (source) return canvasToPngBlob(source);
+      throw new Error('Static export failed.');
     }
-    const canvas = document.createElement('canvas');
-    canvas.width = source.width;
-    canvas.height = source.height;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) {
-      const request = buildServerRequest();
-      if (!request) throw new Error('Missing export request.');
-      return getVisualization(request);
-    }
-    ctx.drawImage(source, 0, 0);
-    drawRideVizWatermark(ctx, canvas.width, canvas.height);
-    return canvasToPngBlob(canvas);
   };
 
   const buildVideoRequest = (): VideoExportRequest | null => {
@@ -674,7 +666,6 @@ export default function ToolPageImpl({ onNavigateHome }: ToolPageProps) {
           isAnimated={config.animated}
           canAnimatedExport={hasProAccess}
           shareStatus={shareStatus}
-          showWatermark={!hasProAccess}
           emptyState={<UploadZone onFileSelect={handleFileSelect} isUploading={isUploading} error={uploadError || undefined} />}
         />
         <aside className="tool-controls" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
