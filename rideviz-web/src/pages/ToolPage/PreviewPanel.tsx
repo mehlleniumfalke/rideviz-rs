@@ -71,7 +71,7 @@ export default function PreviewPanel({
         {!fileId ? (
           emptyState ?? (
             <div style={{ textAlign: 'center', color: 'var(--gray)' }}>
-              <div style={{ fontSize: '48px', marginBottom: 'var(--space-4)', opacity: 0.3 }}>↑</div>
+              <div style={{ fontSize: '48px', marginBottom: 'var(--space-4)', opacity: 0.3 }}>^</div>
               <div>Upload a file to preview</div>
             </div>
           )
@@ -82,7 +82,7 @@ export default function PreviewPanel({
           </div>
         ) : error ? (
           <div style={{ textAlign: 'center', color: '#c00' }} aria-live="polite">
-            <div style={{ marginBottom: 'var(--space-2)' }}>⚠</div>
+            <div style={{ marginBottom: 'var(--space-2)' }}>!</div>
             <div style={{ fontSize: 'var(--text-sm)' }}>{error}</div>
           </div>
         ) : (
@@ -117,10 +117,10 @@ export default function PreviewPanel({
               disabled={isExporting || (isAnimated && !canAnimatedExport)}
               style={{ width: '100%', padding: 'var(--space-3)' }}
             >
-              {isExporting ? 'Preparing...' : isAnimated ? (canAnimatedExport ? 'Export MP4 ↓' : 'Upgrade for MP4') : 'Download PNG ↓'}
+              {isExporting ? 'Preparing...' : isAnimated ? (canAnimatedExport ? 'Export MP4 v' : 'Upgrade for MP4') : 'Download PNG v'}
             </button>
             <button onClick={onShare} aria-label="Share generated export" disabled={isExporting} style={{ width: '100%', padding: 'var(--space-3)' }}>
-              {canShare ? 'Share ↗' : 'Share Link ↗'}
+              {canShare ? 'Share ->' : 'Share Link ->'}
             </button>
           </div>
           {isExporting && <div className="progress-indeterminate" style={{ marginTop: 'var(--space-2)' }} aria-hidden />}
@@ -130,3 +130,4 @@ export default function PreviewPanel({
     </div>
   );
 }
+

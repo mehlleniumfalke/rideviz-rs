@@ -47,7 +47,7 @@ export default function StatsPicker({
         aria-label="Toggle stats overlay options"
       >
         <span className="label" style={{ margin: 0 }}>Stats Overlay</span>
-        <span aria-hidden>{isOpen ? '▾' : '▸'}</span>
+        <span aria-hidden>{isOpen ? 'v' : '>'}</span>
       </button>
       {isOpen && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
@@ -81,3 +81,4 @@ export default function StatsPicker({
     </div>
   );
 }
+

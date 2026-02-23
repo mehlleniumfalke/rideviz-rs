@@ -476,7 +476,7 @@ export default function StravaConnect({ onImported, enabled, licenseToken }: Str
                       </span>
                     </span>
                     <span style={{ fontSize: 'var(--text-xs)', color: STRAVA_ORANGE, fontWeight: 600 }}>
-                      Import →
+                      Import &rarr;
                     </span>
                   </button>
                 ))}
@@ -533,3 +533,4 @@ export default function StravaConnect({ onImported, enabled, licenseToken }: Str
     </div>
   );
 }
+

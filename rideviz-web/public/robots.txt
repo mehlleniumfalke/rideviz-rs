@@ -2,4 +2,5 @@ User-agent: *
 Allow: /app
 Disallow: /api/
 
-Sitemap: https://rideviz-rs.onrender.com/sitemap.xml
+Sitemap: https://app.rideviz.online/sitemap.xml
+

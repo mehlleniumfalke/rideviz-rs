@@ -24,7 +24,7 @@ struct ProjectedPoint {
 
 /// Geometry that is identical for every frame and can be precomputed once.
 pub struct PrecomputedRoute3D {
-    /// Full route projected, fitted, and subdivided — ready to reveal per-frame.
+    /// Full route projected, fitted, and subdivided - ready to reveal per-frame.
     smoothed: Vec<ProjectedPoint>,
     /// Painter's-algorithm sort order (indices into `smoothed` segments, back-to-front).
     sorted_wall_order: Vec<usize>,
@@ -820,3 +820,4 @@ fn catmull_rom_optional(
         _ => lerp_optional(p1, p2, t),
     }
 }
+

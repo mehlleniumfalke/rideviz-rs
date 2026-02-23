@@ -161,7 +161,7 @@ function App() {
           }}
           style={{ padding: 'var(--space-3) var(--space-6)', fontSize: 'var(--text-base)' }}
         >
-          Start →
+          Start &rarr;
         </button>
       </div>
     );
@@ -171,3 +171,4 @@ function App() {
 }
 
 export default App;
+

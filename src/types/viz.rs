@@ -71,10 +71,10 @@ pub struct RenderOptions {
     pub animation_duration_ms: u32,
     pub animation_easing: AnimationEasing,
     /// Catmull-Rom curve tension for route smoothing.
-    /// 0.0 = straight lines, 0.5 = very rounded. Good range: 0.2–0.4.
+    /// 0.0 = straight lines, 0.5 = very rounded. Good range: 0.2-0.4.
     pub curve_tension: f32,
     /// Keep every Nth point before rendering. Higher = fewer points = smoother but less detailed.
-    /// 1 = no simplification, 5 = keep every 5th point. Good range: 3–10.
+    /// 1 = no simplification, 5 = keep every 5th point. Good range: 3-10.
     pub simplify: usize,
 }
 
@@ -105,3 +105,4 @@ pub struct OutputConfig {
     pub background: Option<(u8, u8, u8, u8)>,
     pub watermark: bool,
 }
+

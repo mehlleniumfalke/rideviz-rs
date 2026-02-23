@@ -646,7 +646,7 @@ export default function ToolPageImpl({ onNavigateHome }: ToolPageProps) {
           }}
           aria-label="Back to home"
         >
-          ← Back
+          &larr; Back
         </button>
         <h1 style={{ fontSize: 'var(--text-xl)', fontWeight: 600 }}>RideViz</h1>
       </header>
@@ -690,21 +690,21 @@ export default function ToolPageImpl({ onNavigateHome }: ToolPageProps) {
                 <div className="box">
                   <button type="button" onClick={() => toggleSection('appearance')} aria-expanded={!collapsedSections.appearance} style={{ all: 'unset', display: 'flex', width: '100%', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer' }}>
                     <span className="label" style={{ margin: 0 }}>Appearance</span>
-                    <span aria-hidden>{collapsedSections.appearance ? '▸' : '▾'}</span>
+                    <span aria-hidden>{collapsedSections.appearance ? '>' : 'v'}</span>
                   </button>
                 </div>
                 {!collapsedSections.appearance && appearanceControls}
                 <div className="box">
                   <button type="button" onClick={() => toggleSection('export')} aria-expanded={!collapsedSections.export} style={{ all: 'unset', display: 'flex', width: '100%', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer' }}>
                     <span className="label" style={{ margin: 0 }}>Export</span>
-                    <span aria-hidden>{collapsedSections.export ? '▸' : '▾'}</span>
+                    <span aria-hidden>{collapsedSections.export ? '>' : 'v'}</span>
                   </button>
                 </div>
                 {!collapsedSections.export && exportControls}
                 <div className="box">
                   <button type="button" onClick={() => toggleSection('pro')} aria-expanded={!collapsedSections.pro} style={{ all: 'unset', display: 'flex', width: '100%', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer' }}>
                     <span className="label" style={{ margin: 0 }}>Pro</span>
-                    <span aria-hidden>{collapsedSections.pro ? '▸' : '▾'}</span>
+                    <span aria-hidden>{collapsedSections.pro ? '>' : 'v'}</span>
                   </button>
                 </div>
                 {!collapsedSections.pro && proControl}
@@ -728,10 +728,10 @@ export default function ToolPageImpl({ onNavigateHome }: ToolPageProps) {
               disabled={downloadDisabled}
               style={{ width: '100%' }}
             >
-              {isExporting ? 'Preparing...' : config.animated ? (hasProAccess ? 'Export MP4 ↓' : 'Upgrade for MP4') : 'Download PNG ↓'}
+              {isExporting ? 'Preparing...' : config.animated ? (hasProAccess ? 'Export MP4 v' : 'Upgrade for MP4') : 'Download PNG v'}
             </button>
             <button onClick={handleShare} aria-label="Share generated export" disabled={isExporting} style={{ width: '100%' }}>
-              {canShare ? 'Share ↗' : 'Share Link ↗'}
+              {canShare ? 'Share ->' : 'Share Link ->'}
             </button>
           </div>
           {isExporting && <div className="progress-indeterminate" style={{ marginTop: 'var(--space-2)' }} aria-hidden />}
@@ -766,3 +766,4 @@ export default function ToolPageImpl({ onNavigateHome }: ToolPageProps) {
     </div>
   );
 }
+
